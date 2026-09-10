@@ -159,6 +159,7 @@ VOID WINAPI HashVerifySortByStatus( PHASHVERIFYCONTEXT phvctx );
 __forceinline VOID WINAPI HashVerifyReadStates( PHASHVERIFYCONTEXT phvctx );
 __forceinline VOID WINAPI HashVerifySetStates( PHASHVERIFYCONTEXT phvctx );
 INT __cdecl HashVerifySortCompare( PHASHVERIFYCONTEXT phvctx, PPCHVITEM ppItemA, PPCHVITEM ppItemB );
+__forceinline VOID WINAPI HashVerifyRebuildListIndex( PHASHVERIFYCONTEXT phvctx );
 
 
 
@@ -1620,10 +1621,6 @@ LONG_PTR WINAPI HashVerifySetColor( PHASHVERIFYCONTEXT phvctx, LPNMLVCUSTOMDRAW 
 					pcd->clrText = RGB(0x80, 0x80, 0x80);
 					break;
 
-				case HV_STATUS_NEW:
-					pcd->clrText = RGB(0x00, 0x00, 0xC0);
-					break;
-
 				default:
 					pcd->clrText = CLR_DEFAULT;
 			}
@@ -1657,6 +1654,11 @@ LONG_PTR WINAPI HashVerifySetColor( PHASHVERIFYCONTEXT phvctx, LPNMLVCUSTOMDRAW 
 						case HV_STATUS_UNREADABLE:
 							pcd->clrText = RGB(0x00, 0x00, 0x00);
 							pcd->clrTextBk = RGB(0xFF, 0xE0, 0x00);
+							break;
+
+						case HV_STATUS_NEW:
+							pcd->clrText = RGB(0x00, 0x00, 0x00);
+							pcd->clrTextBk = RGB(0x87, 0xCE, 0xFA);
 							break;
 					}
 				}
@@ -1714,10 +1716,20 @@ LONG_PTR WINAPI HashVerifyFindItem( PHASHVERIFYCONTEXT phvctx, LPNMLVFINDITEM pf
 	not_found: return(-1);
 }
 
+__forceinline VOID WINAPI HashVerifyRebuildListIndex( PHASHVERIFYCONTEXT phvctx )
+{
+	// 排序后重排了 index 数组，但每个 item 的 nListviewIndex 仍指向旧位置。
+	// 该字段同时被 worker 用作 index 下标和 listview 显示行号，必须同步重建，
+	// 否则宽限「待命/部分算完也能排序」后，后续哈希会定位到错误行。
+	UINT i;
+	for (i = 0; i < phvctx->cTotal; ++i)
+		phvctx->index[i]->nListviewIndex = (INT)i;
+}
+
 VOID WINAPI HashVerifySortColumn( PHASHVERIFYCONTEXT phvctx, LPNMLISTVIEW plv )
 {
-	if (phvctx->status != CLEANUP_COMPLETED)
-		return;  // Sorting is available only after the worker is done
+	if (phvctx->status == ACTIVE || phvctx->status == PAUSED)
+		return;  // 计算进行中禁止排序；待命（INACTIVE）与算完（CLEANUP_COMPLETED）均可排
 
 	// Capture the current selection/focus state
 	HashVerifyReadStates(phvctx);
@@ -1769,6 +1781,9 @@ VOID WINAPI HashVerifySortColumn( PHASHVERIFYCONTEXT phvctx, LPNMLISTVIEW plv )
 		phvctx->sort.bReverse = TRUE;
 	}
 
+	// 排序重排 index 后，同步各 item 的列表索引
+	HashVerifyRebuildListIndex(phvctx);
+
 	// Restore the selection/focus state
 	HashVerifySetStates(phvctx);
 
@@ -1807,7 +1822,7 @@ VOID WINAPI HashVerifySortColumn( PHASHVERIFYCONTEXT phvctx, LPNMLISTVIEW plv )
 
 VOID WINAPI HashVerifySortByStatus( PHASHVERIFYCONTEXT phvctx )
 {
-	// 按状态整理：相符 → 不符 → 缺失 → 新增（待检测排最后）。
+	// 按状态整理：未算 → 相符 → 不符 → 缺失 → 新增。
 	if (!phvctx->index || !phvctx->cTotal)
 		return;
 
@@ -1816,6 +1831,9 @@ VOID WINAPI HashVerifySortByStatus( PHASHVERIFYCONTEXT phvctx )
 
 	qsort_s(phvctx->index, phvctx->cTotal, sizeof(PHVITEM),
 	        (int(__cdecl*)(void*, const void*, const void*))HashVerifySortCompare, phvctx);
+
+	// 排序重排 index 后，同步各 item 的列表索引
+	HashVerifyRebuildListIndex(phvctx);
 
 	// 更新列头排序箭头并重绘列表
 	{
@@ -1893,8 +1911,8 @@ INT __cdecl HashVerifySortCompare( PHASHVERIFYCONTEXT phvctx, PPCHVITEM ppItemA,
 
 		case HV_COL_STATUS:
 		{
-			// 排序键：相符=0、不符=1、缺失=2、新增=3、待检测=4（下标即 uStatusID）
-			static const UINT8 ruSortKey[] = { 4, 0, 1, 2, 3 };
+			// 排序键：未算=0、相符=1、不符=2、缺失=3、新增=4（下标即 uStatusID）
+			static const UINT8 ruSortKey[] = { 0, 1, 2, 3, 4 };
 			INT keyA = ruSortKey[pItemA->uStatusID];
 			INT keyB = ruSortKey[pItemB->uStatusID];
 			return(keyA - keyB);
