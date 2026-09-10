@@ -111,6 +111,7 @@ typedef struct {
 	UINT               cMatch;       // number of matches
 	UINT               cMismatch;    // number of mismatches
 	UINT               cUnreadable;  // number of unreadable files
+	UINT               cMissing;     // manifest files detected as absent from disk up front
 	UINT               cNew;         // number of newly-added files
 	DWORD              dwStarted;    // GetTickCount() start time
 	HASHVERIFYPREV     prev;         // previous update data, used for update coalescing
@@ -133,6 +134,7 @@ BOOL WINAPI ValidateHexSequence( PTSTR psz, UINT cch );
 // "Newly-added" file detection: walk the directory of the checksum file
 // and flag files that exist on disk but are not listed in the manifest
 VOID WINAPI HashVerifyScanForNewFiles( PHASHVERIFYCONTEXT phvctx );
+VOID WINAPI HashVerifyScanForMissingFiles( PHASHVERIFYCONTEXT phvctx );
 VOID WINAPI HashVerifyScanDir( PHASHVERIFYCONTEXT phvctx, PTSTR pszDir, UINT cchDir,
                                UINT cchPrefix, UINT cOrigTotal );
 BOOL WINAPI HashVerifyIsPathInList( PHASHVERIFYCONTEXT phvctx, PCTSTR pszPath, UINT cOrigTotal );
@@ -223,6 +225,11 @@ DWORD WINAPI HashVerifyThread( PTSTR pszPath )
 
 		// Scan the manifest's folder for "newly-added" files
 		HashVerifyScanForNewFiles(&hvctx);
+
+		// Flag manifest files that no longer exist on disk as "缺失" up front,
+		// so they show as missing the moment the dialog opens (mirrors the
+		// "新增" scan above)
+		HashVerifyScanForMissingFiles(&hvctx);
 
 		DialogBoxParam(
 			g_hModThisDll,
@@ -721,6 +728,50 @@ VOID WINAPI HashVerifyScanForNewFiles( PHASHVERIFYCONTEXT phvctx )
 	}
 }
 
+// Flags manifest files that are absent from disk as "缺失" (HV_STATUS_UNREADABLE)
+// before the dialog is shown, so they display as missing immediately instead of
+// only after the worker fails to read them.  Only the first cOrigTotal entries
+// (the files parsed from the manifest) are checked.
+VOID WINAPI HashVerifyScanForMissingFiles( PHASHVERIFYCONTEXT phvctx )
+{
+	PTSTR pszSlash;
+	UINT cchDir, cchPrefix, i;
+
+	if (!phvctx->cOrigTotal || !phvctx->index)
+		return;
+
+	// Determine the folder of the checksum file (excluding the trailing '\')
+	pszSlash = StrRChr(phvctx->pszPath, NULL, TEXT('\\'));
+	if (!pszSlash)
+		return;
+
+	cchDir = (UINT)(pszSlash - phvctx->pszPath);
+	cchPrefix = cchDir + 1;  // relative-path prefix = folder length + trailing '\'
+
+	for (i = 0; i < phvctx->cOrigTotal; ++i)
+	{
+		PHASHVERIFYITEM pItem = phvctx->index[i];
+		TCHAR szPath[MAX_PATH_BUFFER];
+		SIZE_T cchPrefixUse = cchPrefix;
+
+		// Absolute paths are checked verbatim; relative paths are resolved
+		// against the checksum file's folder (mirrors the worker's path build)
+		if (pItem->pszDisplayName[0] == TEXT('\\') ||
+		    pItem->pszDisplayName[1] == TEXT(':'))
+			cchPrefixUse = 0;
+
+		SSChainNCpy2(szPath, phvctx->pszPath, cchPrefixUse,
+		             pItem->pszDisplayName, pItem->cchDisplayName);
+
+		if (GetFileAttributes(szPath) == INVALID_FILE_ATTRIBUTES)
+		{
+			pItem->uStatusID = HV_STATUS_UNREADABLE;
+			++phvctx->cUnreadable;
+			++phvctx->cMissing;
+		}
+	}
+}
+
 
 
 /*============================================================================*\
@@ -1026,7 +1077,7 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 			phvctx->hWndPBFile  = GetDlgItem(hWnd, IDC_PROG_FILE);
 
 			// Initialize the summary; progress covers only the manifest's files
-			SendMessage(phvctx->hWndPBTotal, PBM_SETRANGE32, 0, phvctx->cOrigTotal);
+			SendMessage(phvctx->hWndPBTotal, PBM_SETRANGE32, 0, phvctx->cOrigTotal - phvctx->cMissing);
 			SendMessage(phvctx->hWndPBTotal, PBM_SETPOS, 0, 0);
 			HashVerifyUpdateSummary(phvctx, NULL);
 
@@ -1078,7 +1129,7 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 				{
 					if (phvctx->status == CLEANUP_COMPLETED)
 					{
-						if (phvctx->cHandledMsgs >= phvctx->cOrigTotal)
+						if (phvctx->cHandledMsgs >= phvctx->cOrigTotal - phvctx->cMissing)
 							HashVerifySortByStatus(phvctx);  // 全部算完：整理
 						else
 							HashVerifyStartHashing(phvctx, TRUE, FALSE);  // 部分算完：再次优先算选中
@@ -1183,7 +1234,7 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 			// (no further hashing), and the progress bars stay filled/visible.
 			if (!(phvctx->dwFlags & HCF_EXIT_PENDING))
 			{
-				if (phvctx->cHandledMsgs >= phvctx->cOrigTotal)
+				if (phvctx->cHandledMsgs >= phvctx->cOrigTotal - phvctx->cMissing)
 				{
 					// 全部算完：完成（禁用）+ 整理
 					SetControlText(phvctx->hWnd, IDC_PAUSE, IDS_HV_DONE);
@@ -1442,7 +1493,7 @@ VOID WINAPI HashVerifyUpdateSummary( PHASHVERIFYCONTEXT phvctx, PHASHVERIFYITEM 
 
 		// Remaining = manifest files that have not been handled yet ("新增" files
 		// are already accounted for in cNew and were never hashed)
-		FormatFractionalResults(szFormat, szBuffer, phvctx->cOrigTotal - phvctx->cHandledMsgs, phvctx->cTotal);
+		FormatFractionalResults(szFormat, szBuffer, phvctx->cOrigTotal - phvctx->cMissing - phvctx->cHandledMsgs, phvctx->cTotal);
 		SetDlgItemText(hWnd, IDC_PENDING_RESULTS, szBuffer);
 
 		SendMessage(phvctx->hWndPBTotal, PBM_SETPOS, phvctx->cHandledMsgs, 0);
