@@ -118,6 +118,7 @@ typedef struct {
 	UINT               uMaxBatch;    // maximum number of updates to coalesce
     volatile DWORD     whctxFlags;   // WinHash library dwFlags (which checksums to use)
 	BOOL               bSelfcheckFailed; // checksum file failed its own self-check
+	TCHAR              szTimestamp[MAX_STRINGRES];  // "; cn<...>" timestamp embedded in the file
 	TCHAR              szStatus[5][MAX_STRINGRES];
 } HASHVERIFYCONTEXT, *PHASHVERIFYCONTEXT;
 
@@ -386,6 +387,20 @@ PBYTE WINAPI HashVerifyLoadData( PHASHVERIFYCONTEXT phvctx )
 			// Prepare the data for the parser...
 			phvctx->pszFileData = BufferToWStr(&pbRawData, cbRawData.LowPart);
 			HCNormalizeString(phvctx->pszFileData);
+
+			// Extract the embedded "; cn<YYYYMMDDHHMMSS>" timestamp, if present
+			phvctx->szTimestamp[0] = 0;
+			{
+				PTSTR pszTs = StrStrW(phvctx->pszFileData, L"; cn");
+				if (pszTs)
+				{
+					UINT i = 0;
+					pszTs += 2;   // skip "; "
+					while (i < countof(phvctx->szTimestamp) - 1 && pszTs[i] && pszTs[i] != L'\n' && pszTs[i] != L'\r')
+						phvctx->szTimestamp[i++] = pszTs[i];
+					phvctx->szTimestamp[i] = 0;
+				}
+			}
 
 			// Self-check the file's own integrity (see HashCalcAppendSelfCheck)
 			phvctx->bSelfcheckFailed = ! HashVerifySelfCheck(phvctx);
@@ -1394,11 +1409,15 @@ VOID WINAPI HashVerifyDlgInit( PHASHVERIFYCONTEXT phvctx )
 			{ IDC_PENDING_LABEL,    IDS_HV_PENDING    },
 			{ IDC_NEW_LABEL,        IDS_HV_NEW        },
 			{ IDC_PAUSE,            IDS_HV_START      },
-			{ IDC_STOP,             IDS_HV_PRIORITY   }
-		};
+			{ IDC_STOP,             IDS_HV_PRIORITY   },
+				{ IDC_TIME_LABEL,       IDS_HV_TIME       }
+			};
 
 		for (i = 0; i < countof(arStrMap); ++i)
 			SetControlText(hWnd, arStrMap[i][0], arStrMap[i][1]);
+
+		// Show the timestamp embedded in the checksum file
+		SetDlgItemText(hWnd, IDC_TIME_RESULTS, phvctx->szTimestamp);
 	}
 
 	// Set the window icon and title

@@ -270,26 +270,25 @@ VOID WINAPI HashCalcInitSave( PHASHCALCCONTEXT phcctx )
 		phcctx->ofn.Flags = OFN_DONTADDTORECENT | OFN_NOCHANGEDIR | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
 		phcctx->ofn.lpstrDefExt = TEXT("");
 
-		// Set the initial file name: auto-name it with a timestamp in the form
-		// "year.month.day.hour.minute + hash extension" (e.g. 2026.09.05.14.09.sha256)
+		// Set the initial file name: localized base ("校验"/"Verify") +
+		// sequence number + hash extension (e.g. 校验-001.sha256)
 		{
 			PTSTR pszOrigPath;
-			SYSTEMTIME st;
+			TCHAR szBase[MAX_STRINGRES];
 			TCHAR szName[MAX_STRINGMSG];
 
 			SLReset(phcctx->hListRaw);
 			pszOrigPath = SLGetDataAndStep(phcctx->hListRaw);
 
-			GetLocalTime(&st);
+			LoadString(g_hModThisDll, IDS_HS_SAVE_BASENAME, szBase, countof(szBase));
 			StringCchPrintf(
 				szName, countof(szName),
-				TEXT("%04u.%02u.%02u.%02u.%02u%s"),
-				(UINT)st.wYear, (UINT)st.wMonth, (UINT)st.wDay,
-				(UINT)st.wHour, (UINT)st.wMinute,
+				TEXT("%s-001%s"),
+				szBase,
 				g_szHashExtsTab[phcctx->ofn.nFilterIndex - 1]
 			);
 
-			// Directory prefix + timestamp-based name
+			// Directory prefix + generated name
 			SSChainNCpy2(
 				pszFile,
 				pszOrigPath, phcctx->cchPrefix,
@@ -496,9 +495,9 @@ BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem )
 	return(bRetval);
 }
 
-// Append a "; selfcheck=<hash>" comment line to the file, in the file's
-// save encoding. The hash is ASCII so UTF-8 and ANSI output are identical.
-static BOOL WINAPI HashCalcWriteSelfCheckLine( PHASHCALCCONTEXT phcctx, PCTSTR pszHash )
+// Append a "; <comment>" line to the file, in the file's save encoding.
+// The content is ASCII so UTF-8 and ANSI output are identical.
+static BOOL WINAPI HashCalcWriteCommentLine( PHASHCALCCONTEXT phcctx, PCTSTR pszComment )
 {
 	TCHAR szLine[MAX_DIGEST_STRING_LENGTH + 16];
 #ifndef UNICODE
@@ -508,7 +507,7 @@ static BOOL WINAPI HashCalcWriteSelfCheckLine( PHASHCALCCONTEXT phcctx, PCTSTR p
 	PVOID pvLine;
 	size_t cbLine;
 
-	StringCchPrintf(szLine, countof(szLine), TEXT("; selfcheck=%s\r\n"), pszHash);
+	StringCchPrintf(szLine, countof(szLine), TEXT("; %s\r\n"), pszComment);
 
 	switch (phcctx->opt.dwSaveEncoding)
 	{
@@ -600,9 +599,27 @@ VOID WINAPI HashCalcAppendSelfCheck( PHASHCALCCONTEXT phcctx )
 
 	dwAlg = 1UL << (phcctx->ofn.nFilterIndex - 1);
 	if (HashCheckSelfHash(dwAlg, pszW, (UINT)(SSLen(pszW) * sizeof(TCHAR)), szHash))
-		HashCalcWriteSelfCheckLine(phcctx, szHash);
+	{
+		TCHAR szComment[MAX_DIGEST_STRING_LENGTH + 16];
+		StringCchPrintf(szComment, countof(szComment), TEXT("selfcheck=%s"), szHash);
+		HashCalcWriteCommentLine(phcctx, szComment);
+	}
 
 	free(pbData);
+}
+
+// Append the "; cn<YYYYMMDDHHMMSS>" timestamp line to the checksum file.
+VOID WINAPI HashCalcAppendTimestamp( PHASHCALCCONTEXT phcctx )
+{
+	SYSTEMTIME st;
+	TCHAR szTime[MAX_STRINGRES];   // "cn" + 14 digits + NUL
+
+	GetLocalTime(&st);
+	StringCchPrintf(szTime, countof(szTime), TEXT("cn%04u%02u%02u%02u%02u%02u"),
+	                (UINT)st.wYear, (UINT)st.wMonth, (UINT)st.wDay,
+	                (UINT)st.wHour, (UINT)st.wMinute, (UINT)st.wSecond);
+
+	HashCalcWriteCommentLine(phcctx, szTime);
 }
 
 VOID WINAPI HashCalcClearInvalid( PWHRESULTEX pwhres, WCHAR cInvalid )

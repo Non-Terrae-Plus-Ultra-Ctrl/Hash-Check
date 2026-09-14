@@ -41,6 +41,8 @@
 #define IDC_PENDING_RESULTS             410
 #define IDC_NEW_LABEL                   411
 #define IDC_NEW_RESULTS                 412
+#define IDC_TIME_LABEL                  413
+#define IDC_TIME_RESULTS                414
 #define IDC_EXIT                        IDCANCEL
 
 // Options dialog

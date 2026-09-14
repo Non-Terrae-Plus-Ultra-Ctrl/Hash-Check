@@ -11,6 +11,7 @@
 
 #define IDS_HS_MENUTEXT                 0x4200
 #define IDS_HS_TITLE_FMT                0x4201
+#define IDS_HS_SAVE_BASENAME            0x4202
 #define IDS_HS_PAUSE                    IDS_HC_PAUSE
 #define IDS_HS_RESUME                   IDS_HC_RESUME
 #define IDS_HS_CANCEL                   IDS_HC_CANCEL
@@ -56,6 +57,7 @@
 #define IDS_HV_PRIORITY                 0x4412
 #define IDS_HV_SORT                     0x4413
 #define IDS_HV_DONE                     0x4414
+#define IDS_HV_TIME                     0x4415
 
 #define IDS_OPT_TITLE                   0x4500
 #define IDS_OPT_CM                      0x4501

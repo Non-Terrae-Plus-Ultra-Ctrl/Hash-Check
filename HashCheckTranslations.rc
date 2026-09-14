@@ -22,6 +22,7 @@ STRINGTABLE LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 	// Strings used exclusively in the HashSave module (context menu)
 	IDS_HS_MENUTEXT          "Create Chec&ksum File..."
 	IDS_HS_TITLE_FMT         "Creating ""%s""..."      // %s == name of the checksum file
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	// Strings used exclusively in the HashProp module (file properties tab)
 	IDS_HP_TITLE             "Checksums"
@@ -55,6 +56,7 @@ STRINGTABLE LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 	IDS_HV_STATUS_MISMATCH   "MISMATCH"
 	IDS_HV_STATUS_UNREADABLE "UNREADABLE"              // files that cannot be opened or fully read (status column text)
 	IDS_HV_NEW             "New:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NEW"
 
 	// Strings for the options dialog
@@ -89,6 +91,7 @@ STRINGTABLE LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_TRADITIONAL
 
 	IDS_HS_MENUTEXT          "建立校驗檔案(&K)..."
 	IDS_HS_TITLE_FMT         "正在建立 ""%s""..."
+	IDS_HS_SAVE_BASENAME     "校驗"
 
 	IDS_HP_TITLE             "檔案校驗"
 	IDS_HP_STATUSBOX         "進度"
@@ -120,6 +123,7 @@ STRINGTABLE LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_TRADITIONAL
 	IDS_HV_STATUS_MISMATCH   "不符合"
 	IDS_HV_STATUS_UNREADABLE "無法讀取"
 	IDS_HV_NEW             "新增："
+	IDS_HV_TIME              "時間:"
 	IDS_HV_STATUS_NEW      "新增"
 
 	IDS_OPT_TITLE            "HashCheck 選項"
@@ -153,6 +157,7 @@ STRINGTABLE LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
 
 	IDS_HS_MENUTEXT          "创建校验信息文件(&K)..."
 	IDS_HS_TITLE_FMT         "正在创建 ""%s""..."
+	IDS_HS_SAVE_BASENAME     "校验"
 
 	IDS_HP_TITLE             "文件校验"
 	IDS_HP_STATUSBOX         "进度"
@@ -167,9 +172,9 @@ STRINGTABLE LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
 	IDS_HV_LOADERROR_FMT     "无法载入 ""%s"""
 	IDS_HV_SUMMARY           "摘要"
 	IDS_HV_MATCH             "相符:"
-	IDS_HV_MISMATCH          "不符合:"
+	IDS_HV_MISMATCH          "不符:"
 	IDS_HV_UNREADABLE        "缺失:"
-	IDS_HV_PENDING           "待检测:"
+	IDS_HV_PENDING           "待检:"
 	IDS_HV_EXIT              "退出(&X)"
 	IDS_HV_START             "开始"
 	IDS_HV_PRIORITY          "优先"
@@ -184,6 +189,7 @@ STRINGTABLE LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
 	IDS_HV_STATUS_MISMATCH   "不 符"
 	IDS_HV_STATUS_UNREADABLE "缺失"
 	IDS_HV_NEW             "新增："
+	IDS_HV_TIME              "时间:"
 	IDS_HV_STATUS_NEW      "新增"
 
 	IDS_OPT_TITLE            "HashCheck 选项"
@@ -217,6 +223,7 @@ STRINGTABLE LANGUAGE LANG_CZECH, SUBLANG_DEFAULT
 
 	IDS_HS_MENUTEXT          "Vytvoř soubor &kontrolního součtu..."
 	IDS_HS_TITLE_FMT         "Vytvářím ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Kontrolní součty"
 	IDS_HP_STATUSBOX         "Postup"
@@ -248,6 +255,7 @@ STRINGTABLE LANGUAGE LANG_CZECH, SUBLANG_DEFAULT
 	IDS_HV_STATUS_MISMATCH   "ODLIŠNOST"
 	IDS_HV_STATUS_UNREADABLE "NEČITELNOST"
 	IDS_HV_NEW             "Nové:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOVÝ"
 
 	IDS_OPT_TITLE            "HashCheck nastavení"
@@ -281,6 +289,7 @@ STRINGTABLE LANGUAGE LANG_GERMAN, SUBLANG_NEUTRAL
 
 	IDS_HS_MENUTEXT          "Erstelle &Prüfsummen-Datei..."
 	IDS_HS_TITLE_FMT         "Erstelle ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Prüfsummen"
 	IDS_HP_STATUSBOX         "Fortschritt"
@@ -312,6 +321,7 @@ STRINGTABLE LANGUAGE LANG_GERMAN, SUBLANG_NEUTRAL
 	IDS_HV_STATUS_MISMATCH   "Abweichung"
 	IDS_HV_STATUS_UNREADABLE "Unlesbar"
 	IDS_HV_NEW             "Neu:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NEU"
 
 	IDS_OPT_TITLE            "HashCheck Optionen"
@@ -345,6 +355,7 @@ STRINGTABLE LANGUAGE LANG_GREEK, SUBLANG_DEFAULT
 
 	IDS_HS_MENUTEXT          "Δημιουργία αρχείου chec&ksum..."
 	IDS_HS_TITLE_FMT         "Δημιουργία του «%s»..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Αρχεία Checksum"
 	IDS_HP_STATUSBOX         "Πρόοδος"
@@ -376,6 +387,7 @@ STRINGTABLE LANGUAGE LANG_GREEK, SUBLANG_DEFAULT
 	IDS_HV_STATUS_MISMATCH   "ΔΕΝ ΤΑΙΡΙΑΖΕΙ"
 	IDS_HV_STATUS_UNREADABLE "ΜΗ ΑΝΑΓΝΩΣΙΜΟ"
 	IDS_HV_NEW             "Νέα:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "ΝΕΟ"
 
 	IDS_OPT_TITLE            "Επιλογές HashCheck"
@@ -409,6 +421,7 @@ STRINGTABLE LANGUAGE LANG_SPANISH, SUBLANG_NEUTRAL
 
 	IDS_HS_MENUTEXT          "Crear archivo chec&ksum..."
 	IDS_HS_TITLE_FMT         "Creando ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Checksum"
 	IDS_HP_STATUSBOX         "Progreso"
@@ -440,6 +453,7 @@ STRINGTABLE LANGUAGE LANG_SPANISH, SUBLANG_NEUTRAL
 	IDS_HV_STATUS_MISMATCH   "INCORRECTO"
 	IDS_HV_STATUS_UNREADABLE "ILEGIBLE"
 	IDS_HV_NEW             "Nuevo:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NUEVO"
 
 	IDS_OPT_TITLE            "Opciones de HashCheck"
@@ -473,6 +487,7 @@ STRINGTABLE LANGUAGE LANG_FRENCH, SUBLANG_NEUTRAL
 
 	IDS_HS_MENUTEXT          "Créer un fichier de vérification..."
 	IDS_HS_TITLE_FMT         "Création de ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Hachages"
 	IDS_HP_STATUSBOX         "Progression"
@@ -504,6 +519,7 @@ STRINGTABLE LANGUAGE LANG_FRENCH, SUBLANG_NEUTRAL
 	IDS_HV_STATUS_MISMATCH   "INCORRECT"
 	IDS_HV_STATUS_UNREADABLE "ILLISIBLE"
 	IDS_HV_NEW             "Nouveau:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOUVEAU"
 
 	IDS_OPT_TITLE            "Options de HashCheck"
@@ -537,6 +553,7 @@ STRINGTABLE LANGUAGE LANG_ITALIAN, SUBLANG_NEUTRAL
 
 	IDS_HS_MENUTEXT          "Crea file di chec&ksum..."
 	IDS_HS_TITLE_FMT         "Creazione di ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Checksum"
 	IDS_HP_STATUSBOX         "Progresso"
@@ -568,6 +585,7 @@ STRINGTABLE LANGUAGE LANG_ITALIAN, SUBLANG_NEUTRAL
 	IDS_HV_STATUS_MISMATCH   "DANNEGGIATO"
 	IDS_HV_STATUS_UNREADABLE "MANCANTE"
 	IDS_HV_NEW             "Nuovo:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NUOVO"
 
 	IDS_OPT_TITLE            "Opzioni HashCheck"
@@ -601,6 +619,7 @@ STRINGTABLE LANGUAGE LANG_JAPANESE, SUBLANG_DEFAULT
 
 	IDS_HS_MENUTEXT          "チェックサムファイルの作成(&K)..."
 	IDS_HS_TITLE_FMT         """%s"" を作成します..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "ハッシュ"
 	IDS_HP_STATUSBOX         "ステータス"
@@ -632,6 +651,7 @@ STRINGTABLE LANGUAGE LANG_JAPANESE, SUBLANG_DEFAULT
 	IDS_HV_STATUS_MISMATCH   "違 う"
 	IDS_HV_STATUS_UNREADABLE "読込失敗"
 	IDS_HV_NEW             "追加:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "追加"
 
 	IDS_OPT_TITLE            "ハッシュチェックオプション"
@@ -665,6 +685,7 @@ STRINGTABLE LANGUAGE LANG_KOREAN, SUBLANG_DEFAULT
 
 	IDS_HS_MENUTEXT          "체크섬 파일 만들기(&K)..."
 	IDS_HS_TITLE_FMT         """%s"" 생성중..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "체크섬"
 	IDS_HP_STATUSBOX         "진행"
@@ -696,6 +717,7 @@ STRINGTABLE LANGUAGE LANG_KOREAN, SUBLANG_DEFAULT
 	IDS_HV_STATUS_MISMATCH   "불일치"
 	IDS_HV_STATUS_UNREADABLE "판독 불가"
 	IDS_HV_NEW             "추가:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "추가"
 
 	IDS_OPT_TITLE            "해시 검사 옵션"
@@ -729,6 +751,7 @@ STRINGTABLE LANGUAGE LANG_DUTCH, SUBLANG_NEUTRAL
 
 	IDS_HS_MENUTEXT          "&Creëer controlegetalbestand..."
 	IDS_HS_TITLE_FMT         "Voortgang ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Controlegetallen"
 	IDS_HP_STATUSBOX         "Voortgang"
@@ -760,6 +783,7 @@ STRINGTABLE LANGUAGE LANG_DUTCH, SUBLANG_NEUTRAL
 	IDS_HV_STATUS_MISMATCH   "ONGELIJK"
 	IDS_HV_STATUS_UNREADABLE "ONLEESBAAR"
 	IDS_HV_NEW             "Nieuw:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NIEUW"
 
 	IDS_OPT_TITLE            "HashCheck opties"
@@ -793,6 +817,7 @@ STRINGTABLE LANGUAGE LANG_POLISH, SUBLANG_DEFAULT
 
 	IDS_HS_MENUTEXT          "Utwórz plik sumy &kontrolnej..."
 	IDS_HS_TITLE_FMT         "Tworzę ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Sumy kontrolne"
 	IDS_HP_STATUSBOX         "Postęp"
@@ -824,6 +849,7 @@ STRINGTABLE LANGUAGE LANG_POLISH, SUBLANG_DEFAULT
 	IDS_HV_STATUS_MISMATCH   "NIEZGODNY"
 	IDS_HV_STATUS_UNREADABLE "NIECZYTELNY"
 	IDS_HV_NEW             "Nowe:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOWY"
 
 	IDS_OPT_TITLE            "Opcje HashCheck"
@@ -857,6 +883,7 @@ STRINGTABLE LANGUAGE LANG_PORTUGUESE, SUBLANG_PORTUGUESE_BRAZILIAN
 
 	IDS_HS_MENUTEXT          "Criar Arquivo de Chec&ksum ..."
 	IDS_HS_TITLE_FMT         "Criando ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Identificação digital"
 	IDS_HP_STATUSBOX         "Progresso"
@@ -888,6 +915,7 @@ STRINGTABLE LANGUAGE LANG_PORTUGUESE, SUBLANG_PORTUGUESE_BRAZILIAN
 	IDS_HV_STATUS_MISMATCH   "DIFERENTES"
 	IDS_HV_STATUS_UNREADABLE "ILEGÍVEL"
 	IDS_HV_NEW             "Novo:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOVO"
 
 	IDS_OPT_TITLE            "Opções do HashCheck"
@@ -921,6 +949,7 @@ STRINGTABLE LANGUAGE LANG_PORTUGUESE, SUBLANG_PORTUGUESE
 
 	IDS_HS_MENUTEXT          "Criar ficheiro de Chec&ksum..."
 	IDS_HS_TITLE_FMT         "Criando ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Checksums"
 	IDS_HP_STATUSBOX         "Progresso"
@@ -952,6 +981,7 @@ STRINGTABLE LANGUAGE LANG_PORTUGUESE, SUBLANG_PORTUGUESE
 	IDS_HV_STATUS_MISMATCH   "INAGUALÁVEL"
 	IDS_HV_STATUS_UNREADABLE "ILEGÍVEL"
 	IDS_HV_NEW             "Novo:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOVO"
 
 	IDS_OPT_TITLE            "Opções do HashCheck"
@@ -985,6 +1015,7 @@ STRINGTABLE LANGUAGE LANG_ROMANIAN, SUBLANG_DEFAULT
 
 	IDS_HS_MENUTEXT          "Crează fişier cu su&me de control..."
 	IDS_HS_TITLE_FMT         "Creez ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Sume de control"
 	IDS_HP_STATUSBOX         "Progres"
@@ -1016,6 +1047,7 @@ STRINGTABLE LANGUAGE LANG_ROMANIAN, SUBLANG_DEFAULT
 	IDS_HV_STATUS_MISMATCH   "DIFERIT"
 	IDS_HV_STATUS_UNREADABLE "NECITIT"
 	IDS_HV_NEW             "Nou:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOU"
 
 	IDS_OPT_TITLE            "Opţiuni HashCheck"
@@ -1049,6 +1081,7 @@ STRINGTABLE LANGUAGE LANG_RUSSIAN, SUBLANG_DEFAULT
 
 	IDS_HS_MENUTEXT          "Создать &файл контрольной суммы..."
 	IDS_HS_TITLE_FMT         "Создание ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Контрольные суммы"
 	IDS_HP_STATUSBOX         "Выполнение"
@@ -1080,6 +1113,7 @@ STRINGTABLE LANGUAGE LANG_RUSSIAN, SUBLANG_DEFAULT
 	IDS_HV_STATUS_MISMATCH   "НЕ СОВПАЛ"
 	IDS_HV_STATUS_UNREADABLE "НЕ ПРОЧТЕН"
 	IDS_HV_NEW             "Новые:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "НОВЫЙ"
 
 	IDS_OPT_TITLE            "Опции HashCheck"
@@ -1113,6 +1147,7 @@ STRINGTABLE LANGUAGE LANG_SWEDISH, SUBLANG_NEUTRAL
 
 	IDS_HS_MENUTEXT          "Skapa chec&ksum-fil..."
 	IDS_HS_TITLE_FMT         "Skapar ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Checksums"
 	IDS_HP_STATUSBOX         "Utfört"
@@ -1144,6 +1179,7 @@ STRINGTABLE LANGUAGE LANG_SWEDISH, SUBLANG_NEUTRAL
 	IDS_HV_STATUS_MISMATCH   "EJ MATCH"
 	IDS_HV_STATUS_UNREADABLE "OLÄSBARA"
 	IDS_HV_NEW             "Ny:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NY"
 
 	IDS_OPT_TITLE            "HashCheck Inställningar"
@@ -1177,6 +1213,7 @@ STRINGTABLE LANGUAGE LANG_TURKISH, SUBLANG_DEFAULT
 
 	IDS_HS_MENUTEXT          "Chec&ksum oluştur..."
 	IDS_HS_TITLE_FMT         """%s"" oluşturuluyor..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Dosya Hash'leri"
 	IDS_HP_STATUSBOX         "Süreç"
@@ -1208,6 +1245,7 @@ STRINGTABLE LANGUAGE LANG_TURKISH, SUBLANG_DEFAULT
 	IDS_HV_STATUS_MISMATCH   "UYUMSUZ"
 	IDS_HV_STATUS_UNREADABLE "OKUNAMIYOR"
 	IDS_HV_NEW             "Yeni:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "YENİ"
 
 	IDS_OPT_TITLE            "HashCheck Özellikleri"
@@ -1241,6 +1279,7 @@ STRINGTABLE LANGUAGE LANG_UKRAINIAN, SUBLANG_DEFAULT
 
 	IDS_HS_MENUTEXT          "Створити &файл контрольної суми..."
 	IDS_HS_TITLE_FMT         "Створення ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Контрольні суми"
 	IDS_HP_STATUSBOX         "Виконанння"
@@ -1272,6 +1311,7 @@ STRINGTABLE LANGUAGE LANG_UKRAINIAN, SUBLANG_DEFAULT
 	IDS_HV_STATUS_MISMATCH   "НЕ СПІВПАВ"
 	IDS_HV_STATUS_UNREADABLE "НЕ ПРОЧИТАНИЙ"
 	IDS_HV_NEW             "Нові:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "НОВИЙ"
 
 	IDS_OPT_TITLE            "Опції HashCheck"
@@ -1305,6 +1345,7 @@ STRINGTABLE LANGUAGE LANG_CATALAN, SUBLANG_CATALAN_CATALAN
 
 	IDS_HS_MENUTEXT          "Crea fitxer de verificació..."
 	IDS_HS_TITLE_FMT         "Creant ""%s""..."
+	IDS_HS_SAVE_BASENAME     "Verify"
 
 	IDS_HP_TITLE             "Checksums"
 	IDS_HP_STATUSBOX         "Progrés"
@@ -1336,6 +1377,7 @@ STRINGTABLE LANGUAGE LANG_CATALAN, SUBLANG_CATALAN_CATALAN
 	IDS_HV_STATUS_MISMATCH   "NO COINCIDEIX"
 	IDS_HV_STATUS_UNREADABLE "IL·LEGIBLE"
 	IDS_HV_NEW             "Nou:"
+	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOU"
 
 	IDS_OPT_TITLE            "Opcions de HashCheck"
