@@ -104,6 +104,8 @@ BOOL WINAPI HashCalcPrepare( PHASHCALCCONTEXT phcctx );
 VOID WINAPI HashCalcInitSave( PHASHCALCCONTEXT phcctx );
 VOID WINAPI HashCalcSetSaveFormat( PHASHCALCCONTEXT phcctx );
 BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem );
+VOID WINAPI HashCalcAppendSelfCheck( PHASHCALCCONTEXT phcctx );
+VOID WINAPI HashCalcAppendTimestamp( PHASHCALCCONTEXT phcctx );
 VOID WINAPI HashCalcClearInvalid( PWHRESULTEX pwhres, WCHAR cInvalid );
 BOOL WINAPI HashCalcDeleteFileByHandle( HANDLE hFile );
 VOID WINAPI HashCalcTogglePrep( PHASHCALCCONTEXT phcctx, BOOL bState );

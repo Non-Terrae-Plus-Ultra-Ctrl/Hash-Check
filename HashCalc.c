@@ -14,6 +14,7 @@
 #include "UnicodeHelpers.h"
 #include "libs/WinHash.h"
 #include <Strsafe.h>
+#include <stdlib.h>
 
 
 // Due to the stupidity of the x64 compiler, the code emitted for the non-inline
@@ -269,26 +270,25 @@ VOID WINAPI HashCalcInitSave( PHASHCALCCONTEXT phcctx )
 		phcctx->ofn.Flags = OFN_DONTADDTORECENT | OFN_NOCHANGEDIR | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
 		phcctx->ofn.lpstrDefExt = TEXT("");
 
-		// Set the initial file name: auto-name it with a timestamp in the form
-		// "year.month.day.hour.minute + hash extension" (e.g. 2026.09.05.14.09.sha256)
+		// Set the initial file name: localized base ("校验"/"Verify") +
+		// sequence number + hash extension (e.g. 校验-001.sha256)
 		{
 			PTSTR pszOrigPath;
-			SYSTEMTIME st;
+			TCHAR szBase[MAX_STRINGRES];
 			TCHAR szName[MAX_STRINGMSG];
 
 			SLReset(phcctx->hListRaw);
 			pszOrigPath = SLGetDataAndStep(phcctx->hListRaw);
 
-			GetLocalTime(&st);
+			LoadString(g_hModThisDll, IDS_HS_SAVE_BASENAME, szBase, countof(szBase));
 			StringCchPrintf(
 				szName, countof(szName),
-				TEXT("%04u.%02u.%02u.%02u.%02u%s"),
-				(UINT)st.wYear, (UINT)st.wMonth, (UINT)st.wDay,
-				(UINT)st.wHour, (UINT)st.wMinute,
+				TEXT("%s-001%s"),
+				szBase,
 				g_szHashExtsTab[phcctx->ofn.nFilterIndex - 1]
 			);
 
-			// Directory prefix + timestamp-based name
+			// Directory prefix + generated name
 			SSChainNCpy2(
 				pszFile,
 				pszOrigPath, phcctx->cchPrefix,
@@ -493,6 +493,133 @@ BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem )
 	else return(FALSE);
 
 	return(bRetval);
+}
+
+// Append a "; <comment>" line to the file, in the file's save encoding.
+// The content is ASCII so UTF-8 and ANSI output are identical.
+static BOOL WINAPI HashCalcWriteCommentLine( PHASHCALCCONTEXT phcctx, PCTSTR pszComment )
+{
+	TCHAR szLine[MAX_DIGEST_STRING_LENGTH + 16];
+#ifndef UNICODE
+	WCHAR szW[MAX_DIGEST_STRING_LENGTH + 16];
+#endif
+	CHAR  szA[(MAX_DIGEST_STRING_LENGTH + 16) * 3];
+	PVOID pvLine;
+	size_t cbLine;
+
+	StringCchPrintf(szLine, countof(szLine), TEXT("; %s\r\n"), pszComment);
+
+	switch (phcctx->opt.dwSaveEncoding)
+	{
+		case 1: // UTF-16
+			cbLine = SSLen(szLine) * sizeof(TCHAR);
+			pvLine = szLine;
+			break;
+
+		case 2: // ANSI
+#ifdef UNICODE
+			cbLine = WStrToAStr(szLine, szA, countof(szA)) - 1;
+#else
+			cbLine = SSLen(szLine);
+			memcpy(szA, szLine, cbLine);
+#endif
+			pvLine = szA;
+			break;
+
+		default: // UTF-8
+#ifdef UNICODE
+			cbLine = WStrToUTF8(szLine, szA, countof(szA)) - 1;
+#else
+			cbLine = AStrToWStr(szLine, szW, countof(szW)) - 1;
+			cbLine = WStrToUTF8(szW, szA, countof(szA)) - 1;
+#endif
+			pvLine = szA;
+			break;
+	}
+
+	if (cbLine == 0)
+		return(FALSE);
+
+	{
+		DWORD cbWritten;
+		return(WriteFile(phcctx->hFileOut, pvLine, (DWORD)cbLine, &cbWritten, NULL) &&
+		       cbWritten == (DWORD)cbLine);
+	}
+}
+
+// Self-check the checksum file we just wrote: re-read its raw contents, decode
+// and normalize them exactly as the verifier will, hash that content with the
+// same algorithm as the file, and append the "; selfcheck=<hash>" line.
+VOID WINAPI HashCalcAppendSelfCheck( PHASHCALCCONTEXT phcctx )
+{
+	HANDLE hFile;
+	LARGE_INTEGER cbSize;
+	DWORD cbLen, cbRead;
+	PBYTE pbData;
+	PWSTR pszW;
+	DWORD dwAlg;
+	TCHAR szHash[MAX_DIGEST_STRING_LENGTH];
+
+	if ((hFile = OpenFileForReading(phcctx->ofn.lpstrFile)) == INVALID_HANDLE_VALUE)
+		return;
+
+	if (!GetFileSizeEx(hFile, &cbSize) || cbSize.HighPart)
+	{
+		CloseHandle(hFile);
+		return;
+	}
+
+	cbLen = cbSize.LowPart;
+
+	if (!(pbData = (PBYTE)malloc(cbLen + sizeof(DWORD))))
+	{
+		CloseHandle(hFile);
+		return;
+	}
+
+	if (cbLen && (!ReadFile(hFile, pbData, cbLen, &cbRead, NULL) || cbRead != cbLen))
+	{
+		free(pbData);
+		CloseHandle(hFile);
+		return;
+	}
+
+	CloseHandle(hFile);
+
+	// Null-terminate the buffer for the decoder (mirrors HashVerifyLoadData)
+	*((UPDWORD)(pbData + cbLen)) = 0;
+
+	if (!(pszW = BufferToWStr(&pbData, cbLen)))
+	{
+		free(pbData);
+		return;
+	}
+
+	HCNormalizeString(pszW);
+
+	dwAlg = 1UL << (phcctx->ofn.nFilterIndex - 1);
+	if (HashCheckSelfHash(dwAlg, pszW, (UINT)(SSLen(pszW) * sizeof(TCHAR)), szHash))
+	{
+		TCHAR szComment[MAX_DIGEST_STRING_LENGTH + 16];
+		StringCchPrintf(szComment, countof(szComment), TEXT("selfcheck=%s"), szHash);
+		HashCalcWriteCommentLine(phcctx, szComment);
+	}
+
+	free(pbData);
+}
+
+// Append the "; cn<YYYYMMDDHHMMSS>" timestamp line to the checksum file.
+VOID WINAPI HashCalcAppendTimestamp( PHASHCALCCONTEXT phcctx )
+{
+	SYSTEMTIME st;
+	TCHAR szTime[MAX_STRINGRES];   // "cn" + 14 digits + NUL
+
+	GetLocalTime(&st);
+	StringCchPrintf(szTime, countof(szTime), TEXT("cn%04u%02u%02u%02u%02u%02u"),
+	                (UINT)st.wYear, (UINT)st.wMonth, (UINT)st.wDay,
+	                (UINT)st.wHour, (UINT)st.wMinute, (UINT)st.wSecond);
+
+	HashCalcWriteCommentLine(phcctx, szTime);
 }
 
 VOID WINAPI HashCalcClearInvalid( PWHRESULTEX pwhres, WCHAR cInvalid )

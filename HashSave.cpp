@@ -282,6 +282,14 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
     }
 #endif
 
+// Timestamp + self-check: append "; cn<...>" and "; selfcheck=<hash>" lines
+    // (skipped if the run was cancelled).
+    if (phsctx->status != CANCEL_REQUESTED)
+    {
+        HashCalcAppendTimestamp(phsctx);
+        HashCalcAppendSelfCheck(phsctx);
+    }
+
 #ifdef USE_PPL
     if (bMultithreaded)
     {

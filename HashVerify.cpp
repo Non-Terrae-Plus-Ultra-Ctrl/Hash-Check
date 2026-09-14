@@ -117,6 +117,8 @@ typedef struct {
 	HASHVERIFYPREV     prev;         // previous update data, used for update coalescing
 	UINT               uMaxBatch;    // maximum number of updates to coalesce
     volatile DWORD     whctxFlags;   // WinHash library dwFlags (which checksums to use)
+	BOOL               bSelfcheckFailed; // checksum file failed its own self-check
+	TCHAR              szTimestamp[MAX_STRINGRES];  // "; cn<...>" timestamp embedded in the file
 	TCHAR              szStatus[5][MAX_STRINGRES];
 } HASHVERIFYCONTEXT, *PHASHVERIFYCONTEXT;
 
@@ -215,7 +217,13 @@ DWORD WINAPI HashVerifyThread( PTSTR pszPath )
 	// Load the raw data
 	pbRawData = HashVerifyLoadData(&hvctx);
 
-	if (hvctx.pszFileData && (hvctx.hList = SLCreateEx(TRUE)))
+	if (hvctx.bSelfcheckFailed)
+	{
+		// "The checksum file is corrupted or modified" (Chinese via UCNs)
+		MessageBox(NULL, L"\u6821\u9A8C\u6587\u4EF6\u635F\u574F\u6216\u88AB\u4FEE\u6539",
+		           NULL, MB_OK | MB_ICONERROR);
+	}
+	else if (hvctx.pszFileData && (hvctx.hList = SLCreateEx(TRUE)))
 	{
 		HashVerifyParseData(&hvctx);
 
@@ -272,6 +280,90 @@ DWORD WINAPI HashVerifyThread( PTSTR pszPath )
 	Data parsing functions
 \*============================================================================*/
 
+// Returns a single WHEX_CHECK bit for the algorithm implied by a path's
+// extension, or 0 if the extension is not a checksum extension (mirrors the
+// extension block in HashVerifyParseData).
+DWORD WINAPI HashVerifyAlgFromExt( PCTSTR pszPath )
+{
+	PTSTR pszExt = StrRChr(pszPath, NULL, TEXT('.'));
+
+	if (pszExt)
+	{
+#define HASH_VERIFY_ALG_op(alg) \
+		if (StrCmpI(pszExt, HASH_EXT_##alg) == 0)  return WHEX_CHECK##alg;
+		FOR_EACH_HASH(HASH_VERIFY_ALG_op)
+#undef HASH_VERIFY_ALG_op
+	}
+
+	return(0);
+}
+
+// Locate the self-check line ("; selfcheck=" at the start of a line) in the
+// normalized file data; returns NULL if there is none.
+static PTSTR FindSelfCheckLine( PCTSTR pszData )
+{
+	const TCHAR *p = pszData;
+	const size_t cch = SSLen(TEXT("; selfcheck="));
+
+	for (;;)
+	{
+		while (*p == TEXT(' '))
+			++p;
+
+		if (!*p)
+			return(NULL);
+
+		if (*p == TEXT(';') && StrCmpNI(p, TEXT("; selfcheck="), (INT)cch) == 0)
+			return((PTSTR)p);
+
+		// Advance to the next line
+		while (*p && *p != TEXT('\n'))
+			++p;
+		if (*p == TEXT('\n'))
+			++p;
+	}
+}
+
+// Returns TRUE if the file's embedded self-check matches (or if there is no
+// self-check line, e.g. a file from another tool), FALSE if it was modified.
+BOOL WINAPI HashVerifySelfCheck( PHASHVERIFYCONTEXT phvctx )
+{
+	DWORD dwAlg;
+	PTSTR pszData = phvctx->pszFileData;
+	PTSTR pszSc;
+	TCHAR szExpected[MAX_DIGEST_STRING_LENGTH];
+	TCHAR szActual[MAX_DIGEST_STRING_LENGTH];
+	const TCHAR *p;
+	UINT i;
+
+	if (!pszData)
+		return(TRUE);
+
+	if (!(dwAlg = HashVerifyAlgFromExt(phvctx->pszPath)))
+		return(TRUE);   // can't determine the algorithm; skip self-check
+
+	if (!(pszSc = FindSelfCheckLine(pszData)))
+		return(TRUE);   // no self-check line (old/foreign file)
+
+	// Extract the expected hex following "; selfcheck=" (lower-cased)
+	p = pszSc + SSLen(TEXT("; selfcheck="));
+	i = 0;
+	while (*p && *p != TEXT('\n') && *p != TEXT('\r') && *p != TEXT(' ') &&
+	       i < MAX_DIGEST_STRING_LENGTH - 1)
+	{
+		TCHAR ch = *p++;
+		if (ch >= TEXT('A') && ch <= TEXT('F'))
+			ch += 0x20;
+		szExpected[i++] = ch;
+	}
+	szExpected[i] = 0;
+
+	if (!HashCheckSelfHash(dwAlg, pszData, (UINT)(pszSc - pszData) * sizeof(TCHAR), szActual))
+		return(TRUE);
+
+	return(StrCmpI(szExpected, szActual) == 0);
+}
+
 PBYTE WINAPI HashVerifyLoadData( PHASHVERIFYCONTEXT phvctx )
 {
 	PBYTE pbRawData = NULL;
@@ -295,6 +387,23 @@ PBYTE WINAPI HashVerifyLoadData( PHASHVERIFYCONTEXT phvctx )
 			// Prepare the data for the parser...
 			phvctx->pszFileData = BufferToWStr(&pbRawData, cbRawData.LowPart);
 			HCNormalizeString(phvctx->pszFileData);
+
+			// Extract the embedded "; cn<YYYYMMDDHHMMSS>" timestamp, if present
+			phvctx->szTimestamp[0] = 0;
+			{
+				PTSTR pszTs = StrStrW(phvctx->pszFileData, L"; cn");
+				if (pszTs)
+				{
+					UINT i = 0;
+					pszTs += 2;   // skip "; "
+					while (i < countof(phvctx->szTimestamp) - 1 && pszTs[i] && pszTs[i] != L'\n' && pszTs[i] != L'\r')
+						phvctx->szTimestamp[i++] = pszTs[i];
+					phvctx->szTimestamp[i] = 0;
+				}
+			}
+
+			// Self-check the file's own integrity (see HashCalcAppendSelfCheck)
+			phvctx->bSelfcheckFailed = ! HashVerifySelfCheck(phvctx);
 		}
 
 		CloseHandle(hFile);
@@ -1300,11 +1409,15 @@ VOID WINAPI HashVerifyDlgInit( PHASHVERIFYCONTEXT phvctx )
 			{ IDC_PENDING_LABEL,    IDS_HV_PENDING    },
 			{ IDC_NEW_LABEL,        IDS_HV_NEW        },
 			{ IDC_PAUSE,            IDS_HV_START      },
-			{ IDC_STOP,             IDS_HV_PRIORITY   }
-		};
+			{ IDC_STOP,             IDS_HV_PRIORITY   },
+				{ IDC_TIME_LABEL,       IDS_HV_TIME       }
+			};
 
 		for (i = 0; i < countof(arStrMap); ++i)
 			SetControlText(hWnd, arStrMap[i][0], arStrMap[i][1]);
+
+		// Show the timestamp embedded in the checksum file
+		SetDlgItemText(hWnd, IDC_TIME_RESULTS, phvctx->szTimestamp);
 	}
 
 	// Set the window icon and title
