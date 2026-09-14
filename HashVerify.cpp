@@ -388,17 +388,32 @@ PBYTE WINAPI HashVerifyLoadData( PHASHVERIFYCONTEXT phvctx )
 			phvctx->pszFileData = BufferToWStr(&pbRawData, cbRawData.LowPart);
 			HCNormalizeString(phvctx->pszFileData);
 
-			// Extract the embedded "; cn<YYYYMMDDHHMMSS>" timestamp, if present
+			// Extract the embedded "; <region><YYYYMMDDHHMMSS>" timestamp, if present
 			phvctx->szTimestamp[0] = 0;
 			{
-				PTSTR pszTs = StrStrW(phvctx->pszFileData, L"; cn");
-				if (pszTs)
+				PTSTR pszTs = phvctx->pszFileData;
+				while (!phvctx->szTimestamp[0] && (pszTs = StrStrW(pszTs, L"; ")) != NULL)
 				{
-					UINT i = 0;
-					pszTs += 2;   // skip "; "
-					while (i < countof(phvctx->szTimestamp) - 1 && pszTs[i] && pszTs[i] != L'\n' && pszTs[i] != L'\r')
-						phvctx->szTimestamp[i++] = pszTs[i];
-					phvctx->szTimestamp[i] = 0;
+					PTSTR pszRegion = pszTs + 2;   // skip "; "
+					UINT i, cDigit = 0;
+
+					// 2-letter region code, then exactly 14 digits (YYYYMMDDHHMMSS)
+					if ( ((pszRegion[0] >= L'A' && pszRegion[0] <= L'Z') ||
+					       (pszRegion[0] >= L'a' && pszRegion[0] <= L'z')) &&
+					     ((pszRegion[1] >= L'A' && pszRegion[1] <= L'Z') ||
+					       (pszRegion[1] >= L'a' && pszRegion[1] <= L'z')) )
+					{
+						for (i = 2; pszRegion[i] >= L'0' && pszRegion[i] <= L'9'; ++i)
+							++cDigit;
+						if (cDigit == 14)
+						{
+							for (i = 0; i < countof(phvctx->szTimestamp) - 1 &&
+							                pszRegion[i] && pszRegion[i] != L'\n'; ++i)
+								phvctx->szTimestamp[i] = pszRegion[i];
+							phvctx->szTimestamp[i] = 0;
+						}
+					}
+					pszTs += 2;   // skip "; " and keep scanning comment lines
 				}
 			}
 

@@ -271,29 +271,39 @@ VOID WINAPI HashCalcInitSave( PHASHCALCCONTEXT phcctx )
 		phcctx->ofn.lpstrDefExt = TEXT("");
 
 		// Set the initial file name: localized base ("校验"/"Verify") +
-		// sequence number + hash extension (e.g. 校验-001.sha256)
+		// sequence number + hash extension (e.g. 校验-001.sha256).
+		// Skip sequence numbers whose file already exists.
 		{
 			PTSTR pszOrigPath;
 			TCHAR szBase[MAX_STRINGRES];
-			TCHAR szName[MAX_STRINGMSG];
+			UINT uSeq;
 
 			SLReset(phcctx->hListRaw);
 			pszOrigPath = SLGetDataAndStep(phcctx->hListRaw);
 
 			LoadString(g_hModThisDll, IDS_HS_SAVE_BASENAME, szBase, countof(szBase));
-			StringCchPrintf(
-				szName, countof(szName),
-				TEXT("%s-001%s"),
-				szBase,
-				g_szHashExtsTab[phcctx->ofn.nFilterIndex - 1]
-			);
 
-			// Directory prefix + generated name
-			SSChainNCpy2(
-				pszFile,
-				pszOrigPath, phcctx->cchPrefix,
-				szName, countof(szName)
-			);
+			for (uSeq = 1; ; ++uSeq)
+			{
+				TCHAR szName[MAX_STRINGMSG];
+
+				StringCchPrintf(
+					szName, countof(szName),
+					TEXT("%s-%03u%s"),
+					szBase, uSeq,
+					g_szHashExtsTab[phcctx->ofn.nFilterIndex - 1]
+				);
+
+				// Directory prefix + generated name
+				SSChainNCpy2(
+					pszFile,
+					pszOrigPath, phcctx->cchPrefix,
+					szName, countof(szName)
+				);
+
+				if (!PathFileExists(pszFile))
+					break;
+			}
 		}
 	}
 
@@ -608,14 +618,35 @@ VOID WINAPI HashCalcAppendSelfCheck( PHASHCALCCONTEXT phcctx )
 	free(pbData);
 }
 
-// Append the "; cn<YYYYMMDDHHMMSS>" timestamp line to the checksum file.
+// Append the "; <region><YYYYMMDDHHMMSS>" timestamp line to the checksum file.
 VOID WINAPI HashCalcAppendTimestamp( PHASHCALCCONTEXT phcctx )
 {
 	SYSTEMTIME st;
-	TCHAR szTime[MAX_STRINGRES];   // "cn" + 14 digits + NUL
+	TCHAR szRegion[MAX_STRINGRES];
+	TCHAR szTime[MAX_STRINGRES];   // region(2) + 14 digits + NUL
+
+	// Region = the system "Country or region" (GetUserDefaultGeoName, Win10+),
+	// else the format locale country (GetLocaleInfo), else "cn"; lowercased.
+	szRegion[0] = 0;
+	{
+		HMODULE hKernel32 = GetModuleHandle(TEXT("kernel32.dll"));
+		typedef int(WINAPI* PFN_GUDGN)(PWSTR, int);
+		PFN_GUDGN pfnGeo = (PFN_GUDGN)GetProcAddress(hKernel32, "GetUserDefaultGeoName");
+		if (pfnGeo)
+			pfnGeo(szRegion, countof(szRegion));
+	}
+	if (!szRegion[0])
+	{
+		if (!GetLocaleInfo(LOCALE_USER_DEFAULT, LOCALE_SISO3166CTRYNAME, szRegion, countof(szRegion)))
+			szRegion[0] = 0;
+	}
+	if (!szRegion[0])
+		SSCpy(szRegion, TEXT("cn"));
+	CharLowerBuff(szRegion, (DWORD)SSLen(szRegion));
 
 	GetLocalTime(&st);
-	StringCchPrintf(szTime, countof(szTime), TEXT("cn%04u%02u%02u%02u%02u%02u"),
+	StringCchPrintf(szTime, countof(szTime), TEXT("%s%04u%02u%02u%02u%02u%02u"),
+	                szRegion,
 	                (UINT)st.wYear, (UINT)st.wMonth, (UINT)st.wDay,
 	                (UINT)st.wHour, (UINT)st.wMinute, (UINT)st.wSecond);
 
