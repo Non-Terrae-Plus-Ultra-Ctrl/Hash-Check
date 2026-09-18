@@ -1,4 +1,4 @@
-# HashCheckPRO
+# Hash-Check
 
 一个基于开源 [HashCheck](https://github.com/gurnec/HashCheck) Shell 扩展深度定制的文件哈希校验工具。
 在保留原版右键集成、批量校验等能力的基础上，大幅扩展了算法支持与交互体验。
