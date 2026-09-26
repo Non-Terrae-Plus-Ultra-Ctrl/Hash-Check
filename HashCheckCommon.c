@@ -58,33 +58,6 @@ HANDLE __fastcall OpenFileForReading( PCTSTR pszPath )
 	));
 }
 
-VOID __fastcall HCNormalizeString( PTSTR psz )
-{
-	if (!psz) return;
-
-	while (*psz)
-	{
-		switch (*psz)
-		{
-			case TEXT('\r'):
-				*psz = TEXT('\n');
-				break;
-
-			case TEXT('\t'):
-			case TEXT('"'):
-			case TEXT('*'):
-				*psz = TEXT(' ');
-				break;
-
-			case TEXT('/'):
-				*psz = TEXT('\\');
-				break;
-		}
-
-		++psz;
-	}
-}
-
 VOID WINAPI SetControlText( HWND hWnd, UINT uCtrlID, UINT uStringID )
 {
 	TCHAR szBuffer[MAX_STRINGMSG];
@@ -507,29 +480,4 @@ VOID __fastcall HostRelease( ULONG_PTR uCookie )
 		LPUNKNOWN pUnknown = (LPUNKNOWN)uCookie;
 		pUnknown->lpVtbl->Release(pUnknown);
 	}
-}
-
-BOOL WINAPI HashCheckSelfHash( DWORD dwFlags, const void* pvData, UINT cbBytes, PTSTR szHexOut )
-{
-	WHCTXEX whctx;
-	WHRESULTEX res;
-
-	ZeroMemory(&whctx, sizeof(whctx));
-	ZeroMemory(&res, sizeof(res));
-	whctx.dwFlags = dwFlags;
-	whctx.uCaseMode = WHFMT_LOWERCASE;
-
-	WHInitEx(&whctx);
-	WHUpdateEx(&whctx, (PCBYTE)pvData, cbBytes);
-	WHFinishEx(&whctx, &res);
-
-	switch (dwFlags)
-	{
-#define HASHCHECK_SELFHASH_op(alg) \
-		case WHEX_CHECK##alg:  StringCchCopy(szHexOut, MAX_DIGEST_STRING_LENGTH, res.szHex##alg);  return(TRUE);
-		FOR_EACH_HASH(HASHCHECK_SELFHASH_op)
-#undef HASHCHECK_SELFHASH_op
-	}
-
-	return(FALSE);
 }

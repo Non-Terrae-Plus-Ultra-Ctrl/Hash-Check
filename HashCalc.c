@@ -12,9 +12,13 @@
 #include "HashCheckCommon.h"
 #include "HashCalc.h"
 #include "UnicodeHelpers.h"
+#include "Hcenc.h"
 #include "libs/WinHash.h"
 #include <Strsafe.h>
 #include <stdlib.h>
+#include <bcrypt.h>
+
+// 1.4.9: bcrypt 已由 Hcsign.c 的 #pragma comment 链接
 
 
 // Due to the stupidity of the x64 compiler, the code emitted for the non-inline
@@ -37,8 +41,13 @@ __forceinline BOOL WINAPI IsDoubleSlashPath( PCTSTR pszPath );
 
 // Save helpers
 __forceinline VOID WINAPI HashCalcSetSavePrefix( PHASHCALCCONTEXT phcctx, PTSTR pszSave );
+static BOOL WINAPI HashCalcWriteCommentLine( PHASHCALCCONTEXT phcctx, PCTSTR pszComment );
+static BOOL WINAPI HashCalcWriteSignatureHeader( PHASHCALCCONTEXT phcctx );
 
 
+
+// 1.5.7: SHA-256 合并到 Hcenc.c（HcencSha256）——chk 双端同源防漂移
+#define HashCalcSha256 HcencSha256
 
 /*============================================================================*\
 	Path processing
@@ -361,6 +370,11 @@ VOID WINAPI HashCalcInitSave( PHASHCALCCONTEXT phcctx )
 				DWORD cbWritten;
 				WriteFile(phcctx->hFileOut, &BOM, sizeof(WCHAR), &cbWritten, NULL);
 			}
+
+			// Provision file signing: make sure the local signing key
+			// exists up front.  The signature itself is appended by
+			// HashCalcAppendSignature() after all lines are in.
+			HashCalcWriteSignatureHeader(phcctx);
 		}
 		else
 		{
@@ -409,6 +423,8 @@ BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem )
     PVOID pvLine;                       // will be pointed to the buffer to write out
     size_t cbLine;                      // will be line length in bytes, EXCLUDING nul terminator
     BOOL bRetval = TRUE;
+    TCHAR szChkBody[72];                // 1.4.9: "chk=<64 hex>" per-line integrity
+    BOOL bWriteChk = FALSE;
 
 	// If the checksum to save isn't present in the results
     if (! ((1 << (phcctx->ofn.nFilterIndex - 1)) & pItem->results.dwFlags))
@@ -443,6 +459,64 @@ BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem )
     StringCchPrintfEx(szTbufferAppend, cchLine, NULL, &cchLine, 0,
                       _T("; Elapsed: %d ms\r\n"), pItem->dwElapsed);
 #endif
+
+	// 1.4.9/1.5.6: 逐条 chk——数据行 = 本块最后一个 '\n' 之后（UNREADABLE
+	// 前置注释行在它前面）；裁尾必须在「副本」上做。1.5.3 曾直接在
+	// szTbuffer 本体上裁尾，把数据行的 \r\n 行尾从写盘内容里裁丢——数据行
+	// 与 chk 注释行连成一体，验证端把 "; chk=..." 当文件名的一部分，整清单
+	// 「缺失/新增」无法校验。1.4.9 的原始病（取「\n 之后」拿到行尾 NUL，
+	// chk 全是空串哈希）由「先裁尾再取行」解决，此处只是把裁尾搬到副本。
+	{
+		PTSTR pszLast;
+		PTSTR pScan;
+		PTSTR pszCopy;
+		size_t cchBuf, cchLast;
+
+		cchBuf = SSLen(szTbuffer);
+		pszCopy = (PTSTR)malloc((cchBuf + 1) * sizeof(TCHAR));
+
+		if (pszCopy)
+		{
+			BYTE byHash[32];
+
+			memcpy(pszCopy, szTbuffer, (cchBuf + 1) * sizeof(TCHAR));
+			while (cchBuf && (pszCopy[cchBuf-1] == TEXT('\r') ||
+			                  pszCopy[cchBuf-1] == TEXT('\n') ||
+			                  pszCopy[cchBuf-1] == TEXT(' ')))
+				pszCopy[--cchBuf] = 0;
+
+			pszLast = pszCopy;
+			for (pScan = pszCopy; *pScan; ++pScan)
+			{
+				if (*pScan == TEXT('\n'))
+					pszLast = pScan + 1;
+			}
+
+			cchLast = SSLen(pszLast);
+			if (cchLast && cchLast <= 0x8000)
+			{
+				HCNormalizeString(pszLast);
+
+				if (HashCalcSha256((const BYTE*)pszLast,
+				                   (DWORD)(cchLast * sizeof(TCHAR)), byHash))
+				{
+					static const TCHAR szHex[] = TEXT("0123456789abcdef");
+					UINT k;
+
+					SSCpy(szChkBody, TEXT("chk="));
+					for (k = 0; k < 32; ++k)
+					{
+						szChkBody[4 + 2*k]     = szHex[byHash[k] >> 4];
+						szChkBody[4 + 2*k + 1] = szHex[byHash[k] & 15];
+					}
+					szChkBody[68] = 0;
+					bWriteChk = TRUE;
+				}
+			}
+
+			free(pszCopy);
+		}
+	}
 
 	cchLine = MAX_PATH_BUFFER - cchLine;  // from now on cchLine is the line length in bytes, EXCLUDING nul terminator
 	if (cchLine > 0)
@@ -497,6 +571,10 @@ BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem )
 			INT cbWritten;
 			WriteFile(phcctx->hFileOut, pvLine, (DWORD)cbLine, &cbWritten, NULL);
 			if (cbLine != cbWritten) return(FALSE);
+
+			// 1.4.9: 数据行成功写出 -> 紧跟本条 chk 注释行
+			if (bWriteChk && !HashCalcWriteCommentLine(phcctx, szChkBody))
+				return(FALSE);
 		}
 		else return(FALSE);
 	}
@@ -557,18 +635,78 @@ static BOOL WINAPI HashCalcWriteCommentLine( PHASHCALCCONTEXT phcctx, PCTSTR psz
 	}
 }
 
-// Self-check the checksum file we just wrote: re-read its raw contents, decode
-// and normalize them exactly as the verifier will, hash that content with the
-// same algorithm as the file, and append the "; selfcheck=<hash>" line.
-VOID WINAPI HashCalcAppendSelfCheck( PHASHCALCCONTEXT phcctx )
+
+// Append the "; <region><YYYYMMDDHHMMSS>" timestamp line to the checksum file.
+VOID WINAPI HashCalcAppendTimestamp( PHASHCALCCONTEXT phcctx )
+{
+	SYSTEMTIME st;
+	TCHAR szRegion[MAX_STRINGRES];
+	TCHAR szTime[MAX_STRINGRES];   // region(2) + 14 digits + NUL
+
+	// Region = the system "Country or region" (GetUserDefaultGeoName, Win10+),
+	// else the format locale country (GetLocaleInfo), else "cn"; lowercased.
+	szRegion[0] = 0;
+	{
+		HMODULE hKernel32 = GetModuleHandle(TEXT("kernel32.dll"));
+		typedef int(WINAPI* PFN_GUDGN)(PWSTR, int);
+		PFN_GUDGN pfnGeo = (PFN_GUDGN)GetProcAddress(hKernel32, "GetUserDefaultGeoName");
+		if (pfnGeo)
+			pfnGeo(szRegion, countof(szRegion));
+	}
+	if (!szRegion[0])
+	{
+		if (!GetLocaleInfo(LOCALE_USER_DEFAULT, LOCALE_SISO3166CTRYNAME, szRegion, countof(szRegion)))
+			szRegion[0] = 0;
+	}
+	if (!szRegion[0])
+		SSCpy(szRegion, TEXT("cn"));
+	CharLowerBuff(szRegion, (DWORD)SSLen(szRegion));
+
+	GetLocalTime(&st);
+	StringCchPrintf(szTime, countof(szTime), TEXT("%s%04u%02u%02u%02u%02u%02u"),
+	                szRegion,
+	                (UINT)st.wYear, (UINT)st.wMonth, (UINT)st.wDay,
+	                (UINT)st.wHour, (UINT)st.wMinute, (UINT)st.wSecond);
+
+	HashCalcWriteCommentLine(phcctx, szTime);
+}
+
+
+// Provision signing for a new checksum file (called from HashCalcInitSave,
+// right after the BOM).  1.4.4: the file carries a pub= line (the local KSP
+// public key, written by HashCalcAppendSignature) and a sig= line; the
+// verifier verifies with the in-file pub and layers signer identity
+// (author table / local KSP / TrustedSigners / TOFU).  selfcheck stays
+// removed (1.4.3).  Here we only make sure the local signing key exists;
+// the signature itself is appended by HashCalcAppendSignature at the end.
+// Returns TRUE if signing is provisioned; FALSE if the key could not
+// be created (HashCalcEncryptFile then aborts the save, fail-closed).
+static BOOL WINAPI HashCalcWriteSignatureHeader( PHASHCALCCONTEXT phcctx )
+{
+	if (!HcsignEnsureKey())
+		return FALSE;
+
+	phcctx->bSignEnabled = TRUE;
+	return TRUE;
+}
+
+// Sign the just-finished checksum file: re-read its raw contents, decode and
+// normalize them exactly as the verifier will, sign that normalized text with
+// the per-user signing key (ECDSA P-256, SHA-256 inside HcsignSign), and
+// append the "; sig=<keyid>:<base64url signature>" line.  The signature
+// covers every line that came before it (the hash lines and the timestamp)
+// so any tampering invalidates the signature.
+VOID WINAPI HashCalcAppendSignature( PHASHCALCCONTEXT phcctx )
 {
 	HANDLE hFile;
 	LARGE_INTEGER cbSize;
 	DWORD cbLen, cbRead;
 	PBYTE pbData;
 	PWSTR pszW;
-	DWORD dwAlg;
-	TCHAR szHash[MAX_DIGEST_STRING_LENGTH];
+	PTSTR pszSig = NULL;
+
+	if (!phcctx->bSignEnabled)
+		return;   // no pub= header (key unavailable); leave the file plain
 
 	if ((hFile = OpenFileForReading(phcctx->ofn.lpstrFile)) == INVALID_HANDLE_VALUE)
 		return;
@@ -605,52 +743,174 @@ VOID WINAPI HashCalcAppendSelfCheck( PHASHCALCCONTEXT phcctx )
 		return;
 	}
 
-	HCNormalizeString(pszW);
-
-	dwAlg = 1UL << (phcctx->ofn.nFilterIndex - 1);
-	if (HashCheckSelfHash(dwAlg, pszW, (UINT)(SSLen(pszW) * sizeof(TCHAR)), szHash))
+	// 1.4.4: pub 行回归——签名载荷 = 「原文 + "; pub=<b64>\r\n"」（原始形态）整体
+	// 规范化后的结果，与验证端 normalize（sig 行前内容）字节一致。
+	// 注意：HCNormalizeString 逐字符替换（\r->\n 保留原 \n），\r\n 会变成 \n\n——
+	// 所以载荷必须先拼原始 \r\n 形态再整体规范化，绝不能先规范化再拼 \n。
+	// 任一步失败 -> bSignEnabled 置 FALSE -> HashCalcEncryptFile 删文件（fail-closed）。
 	{
-		TCHAR szComment[MAX_DIGEST_STRING_LENGTH + 16];
-		StringCchPrintf(szComment, countof(szComment), TEXT("selfcheck=%s"), szHash);
-		HashCalcWriteCommentLine(phcctx, szComment);
+		PTSTR pszPub = NULL;
+
+		if (HcsignGetPublicKeyB64(&pszPub))
+		{
+			size_t cch = SSLen(pszW);
+			PWSTR pszPayload = (PWSTR)malloc((cch + SSLen(pszPub) + 16) * sizeof(TCHAR));
+
+			if (pszPayload)
+			{
+				memcpy(pszPayload, pszW, cch * sizeof(TCHAR));
+				memcpy(pszPayload + cch, TEXT("; pub="), 6 * sizeof(TCHAR));
+				cch += 6;
+				memcpy(pszPayload + cch, pszPub, SSLen(pszPub) * sizeof(TCHAR));
+				cch += SSLen(pszPub);
+				pszPayload[cch++] = TEXT('\r');
+				pszPayload[cch++] = TEXT('\n');
+				pszPayload[cch]   = 0;
+
+				HCNormalizeString(pszPayload);   /* 整体规范化（与验证端一致） */
+
+				if (HcsignSign((const BYTE*)pszPayload, (DWORD)(cch * sizeof(TCHAR)), &pszSig))
+				{
+					TCHAR szComment[(MAX_DIGEST_STRING_LENGTH + 16) + 32];
+
+					// pub 行（本机 KSP 公钥——接收方用它验签，传输完整性的根基）
+					StringCchPrintf(szComment, countof(szComment), TEXT("pub=%s"), pszPub);
+					HashCalcWriteCommentLine(phcctx, szComment);
+
+					// sig 行带 keyid（与容器头双写互校验，1.4.3 保留）。
+					// NOTE: %02X (hex) -- the verifier parses the prefix as hex,
+					// and the writer/reader must agree byte-for-byte.
+					StringCchPrintf(szComment, countof(szComment), TEXT("sig=%02X:%s"),
+					                (UINT)HCK_KEYID_LOCAL, pszSig);
+					HashCalcWriteCommentLine(phcctx, szComment);
+				}
+				else
+					phcctx->bSignEnabled = FALSE;   // fail-closed
+
+				free(pszPayload);
+			}
+			else
+				phcctx->bSignEnabled = FALSE;   // fail-closed
+		}
+		else
+			phcctx->bSignEnabled = FALSE;   // fail-closed（EncryptFile 删文件）
+
+		if (pszPub)
+			LocalFree(pszPub);
 	}
+	if (pszSig)
+		LocalFree(pszSig);
 
 	free(pbData);
 }
 
-// Append the "; <region><YYYYMMDDHHMMSS>" timestamp line to the checksum file.
-VOID WINAPI HashCalcAppendTimestamp( PHASHCALCCONTEXT phcctx )
+// Seal the just-finished checksum file into the encrypted container: read the
+// whole plaintext file back (data lines + timestamp + signature), encrypt it
+// with the built-in AES-256-GCM key (see Hcenc.c), and overwrite
+// the file with the container.  The on-disk file becomes non-plaintext; the
+// verifier detects the container magic and decrypts before parsing.  On any
+// failure the file is deleted -- never leave an unencrypted checksum file
+// behind.  hFileOut is closed first (its sharing mode forbids a second
+// write handle); the later close by the caller sees INVALID and is a no-op.
+VOID WINAPI HashCalcEncryptFile( PHASHCALCCONTEXT phcctx )
 {
-	SYSTEMTIME st;
-	TCHAR szRegion[MAX_STRINGRES];
-	TCHAR szTime[MAX_STRINGRES];   // region(2) + 14 digits + NUL
+	HANDLE hFile, hOut;
+	LARGE_INTEGER cbSize;
+	DWORD cbRead, cbWritten;
+	PBYTE pbPlain = NULL;
+	PBYTE pbEnc = NULL;
+	DWORD cbEnc = 0;
+	BOOL bOk = FALSE;
 
-	// Region = the system "Country or region" (GetUserDefaultGeoName, Win10+),
-	// else the format locale country (GetLocaleInfo), else "cn"; lowercased.
-	szRegion[0] = 0;
+	// 1.4.3 fail-closed: an unsigned checksum file would be REJECTED by the
+	// verifier of this build (sealed files must carry a "; sig=" line), so if
+	// signing could not be provisioned, never write the file at all.
+	if (!phcctx->bSignEnabled)
 	{
-		HMODULE hKernel32 = GetModuleHandle(TEXT("kernel32.dll"));
-		typedef int(WINAPI* PFN_GUDGN)(PWSTR, int);
-		PFN_GUDGN pfnGeo = (PFN_GUDGN)GetProcAddress(hKernel32, "GetUserDefaultGeoName");
-		if (pfnGeo)
-			pfnGeo(szRegion, countof(szRegion));
+		MessageBox(NULL, L"签名密钥不可用，已取消保存校验文件。",
+		           NULL, MB_OK | MB_ICONERROR);
+		goto fail_nofile;
 	}
-	if (!szRegion[0])
+
+	if (phcctx->hFileOut != INVALID_HANDLE_VALUE)
 	{
-		if (!GetLocaleInfo(LOCALE_USER_DEFAULT, LOCALE_SISO3166CTRYNAME, szRegion, countof(szRegion)))
-			szRegion[0] = 0;
+		CloseHandle(phcctx->hFileOut);
+		phcctx->hFileOut = INVALID_HANDLE_VALUE;
 	}
-	if (!szRegion[0])
-		SSCpy(szRegion, TEXT("cn"));
-	CharLowerBuff(szRegion, (DWORD)SSLen(szRegion));
 
-	GetLocalTime(&st);
-	StringCchPrintf(szTime, countof(szTime), TEXT("%s%04u%02u%02u%02u%02u%02u"),
-	                szRegion,
-	                (UINT)st.wYear, (UINT)st.wMonth, (UINT)st.wDay,
-	                (UINT)st.wHour, (UINT)st.wMinute, (UINT)st.wSecond);
+	if ((hFile = OpenFileForReading(phcctx->ofn.lpstrFile)) == INVALID_HANDLE_VALUE)
+		goto fail;
 
-	HashCalcWriteCommentLine(phcctx, szTime);
+	if (!GetFileSizeEx(hFile, &cbSize) || cbSize.HighPart)
+	{
+		CloseHandle(hFile);
+		goto fail;
+	}
+
+	pbPlain = (PBYTE)malloc(cbSize.LowPart ? cbSize.LowPart : 1);
+	if (!pbPlain)
+	{
+		CloseHandle(hFile);
+		goto fail;
+	}
+
+	if (cbSize.LowPart &&
+	    (!ReadFile(hFile, pbPlain, cbSize.LowPart, &cbRead, NULL) ||
+	     cbRead != cbSize.LowPart))
+	{
+		CloseHandle(hFile);
+		goto fail;
+	}
+	CloseHandle(hFile);
+
+	// 1.4.2: seal twice with independent random nonces -> [seal A][seal B]
+	// (double-container redundancy).  1.4.3: the keyid (local-machine KSP
+	// trust domain) is written into each container header; the verifier
+	// cross-checks it against the "; sig=XX:" prefix (see Hcenc.h).
+	if (!HcencEncryptPair(HCK_KEYID_LOCAL, pbPlain, cbSize.LowPart,
+	                      &pbEnc, &cbEnc))
+		goto fail;
+
+	hOut = CreateFile(
+		phcctx->ofn.lpstrFile,
+		GENERIC_WRITE,
+		FILE_SHARE_READ,
+		NULL,
+		CREATE_ALWAYS,
+		FILE_ATTRIBUTE_NORMAL,
+		NULL
+	);
+	if (hOut == INVALID_HANDLE_VALUE)
+		goto fail;
+
+	bOk = WriteFile(hOut, pbEnc, cbEnc, &cbWritten, NULL) &&
+	      cbWritten == cbEnc;
+	CloseHandle(hOut);
+
+	if (bOk)
+	{
+		free(pbPlain);
+		free(pbEnc);
+		return;
+	}
+
+fail:
+	if (pbPlain) free(pbPlain);
+	if (pbEnc)   free(pbEnc);
+	DeleteFile(phcctx->ofn.lpstrFile);
+	MessageBox(NULL, L"加密校验文件失败，已删除输出文件。",
+	           NULL, MB_OK | MB_ICONERROR);
+	return;
+
+fail_nofile:
+	// !bSignEnabled path: close the still-open plaintext output handle and
+	// delete the file -- never leave an unsigned plaintext behind.
+	if (phcctx->hFileOut != INVALID_HANDLE_VALUE)
+	{
+		CloseHandle(phcctx->hFileOut);
+		phcctx->hFileOut = INVALID_HANDLE_VALUE;
+	}
+	DeleteFile(phcctx->ofn.lpstrFile);
 }
 
 VOID WINAPI HashCalcClearInvalid( PWHRESULTEX pwhres, WCHAR cInvalid )

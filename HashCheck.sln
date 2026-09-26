@@ -15,7 +15,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HashCheck", "HashCheck.vcxproj", "{DCAD938F-9032-4AF9-BA67-8C0CF309D986}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnitTests", "UnitTests\UnitTests.csproj", "{5BD2397A-F10B-4847-8814-E539FB04AC8F}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -37,18 +36,6 @@ Global
 		{DCAD938F-9032-4AF9-BA67-8C0CF309D986}.Release|Win32.Build.0 = Release|Win32
 		{DCAD938F-9032-4AF9-BA67-8C0CF309D986}.Release|x64.ActiveCfg = Release|x64
 		{DCAD938F-9032-4AF9-BA67-8C0CF309D986}.Release|x64.Build.0 = Release|x64
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Debug|Win32.ActiveCfg = Debug|Any CPU
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Debug|Win32.Build.0 = Debug|Any CPU
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Debug|x64.Build.0 = Debug|Any CPU
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Release|Any CPU.Build.0 = Release|Any CPU
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Release|Win32.ActiveCfg = Release|Any CPU
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Release|Win32.Build.0 = Release|Any CPU
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Release|x64.ActiveCfg = Release|Any CPU
-		{5BD2397A-F10B-4847-8814-E539FB04AC8F}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

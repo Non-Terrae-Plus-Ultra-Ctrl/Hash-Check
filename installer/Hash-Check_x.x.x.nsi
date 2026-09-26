@@ -7,7 +7,7 @@
 Unicode true
 
 Name "HashCheck"
-OutFile "HashCheckPRO_1.3.9.exe"
+OutFile "Hash-Check_x.x.x.exe"
 
 RequestExecutionLevel admin
 ManifestSupportedOS all
@@ -15,7 +15,12 @@ ManifestSupportedOS all
 !define MUI_ICON ..\HashCheck.ico
 !define MUI_ABORTWARNING
 
-!insertmacro MUI_PAGE_WELCOME
+; 1.5.7: 欢迎页砍除（纯仪式，26KB 向导图不再进包）。finish 页必须保留——
+; 1.5.4 教训：砍掉它后 INSTFILES 完成态无按钮可点，非静默安装永远停在
+; 100% 不关窗。finish 页用 1x1 替身图占位（无视觉损失）。
+!define MUI_WELCOMEFINISHPAGE_BITMAP "..\tiny.bmp"
+
+;!insertmacro MUI_PAGE_WELCOME
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW change_license_font
 !insertmacro MUI_PAGE_LICENSE "..\license.txt"
 
@@ -104,13 +109,13 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "Ukrainian"
 !insertmacro MUI_LANGUAGE "Catalan"
 
-VIProductVersion "1.3.9.0"
+VIProductVersion "x.x.x.0"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "HashCheckPRO"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "1.3.9"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "x.x.x"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "Comments" "Installer distributed from https://github.com/gurnec/HashCheck/releases"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "Copyright © 2008-2016 Kai Liu, Christopher Gurnee, Tim Schlueter, et al. All rights reserved."
 VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "Installer (x86/x64) from https://github.com/gurnec/HashCheck/releases"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "1.3.9"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "x.x.x"
 
 ; With solid compression, files that are required before the
 ; actual installation should be stored first in the data block,

@@ -52,6 +52,7 @@
 #define IDS_HV_STATUS_MISMATCH          0x440D
 #define IDS_HV_STATUS_UNREADABLE        0x440E
 #define IDS_HV_STATUS_NEW               0x440F
+#define IDS_HV_STATUS_DAMAGED           0x4416   /* 1.4.9 损坏 */
 #define IDS_HV_NEW                      0x4410
 #define IDS_HV_START                    0x4411
 #define IDS_HV_PRIORITY                 0x4412

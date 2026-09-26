@@ -103,3 +103,32 @@ PWSTR __fastcall BufferToWStr( PBYTE *ppbData, DWORD cbData )
 
 	return(NULL);
 }
+
+// 1.4.3: moved verbatim from HashCheckCommon.c -- see the note in
+// UnicodeHelpers.h (HashSign / pipeline harness link this unit).
+VOID __fastcall HCNormalizeString( PTSTR psz )
+{
+	if (!psz) return;
+
+	while (*psz)
+	{
+		switch (*psz)
+		{
+			case TEXT('\r'):
+				*psz = TEXT('\n');
+				break;
+
+			case TEXT('\t'):
+			case TEXT('"'):
+			case TEXT('*'):
+				*psz = TEXT(' ');
+				break;
+
+			case TEXT('/'):
+				*psz = TEXT('\\');
+				break;
+		}
+
+		++psz;
+	}
+}

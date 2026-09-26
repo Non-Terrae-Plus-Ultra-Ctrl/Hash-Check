@@ -107,7 +107,7 @@
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>shlwapi.lib;comctl32.lib;uxtheme.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>shlwapi.lib;comctl32.lib;uxtheme.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>HashCheck.def</ModuleDefinitionFile>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -131,7 +131,7 @@
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>shlwapi.lib;comctl32.lib;uxtheme.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>shlwapi.lib;comctl32.lib;uxtheme.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>HashCheck.def</ModuleDefinitionFile>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -152,7 +152,7 @@
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>shlwapi.lib;comctl32.lib;uxtheme.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>shlwapi.lib;comctl32.lib;uxtheme.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>HashCheck.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
@@ -172,7 +172,7 @@
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>shlwapi.lib;comctl32.lib;uxtheme.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>shlwapi.lib;comctl32.lib;uxtheme.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>HashCheck.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
@@ -181,6 +181,8 @@
   <ItemGroup>
     <ClCompile Include="CHashCheck.cpp" />
     <ClCompile Include="CHashCheckClassFactory.cpp" />
+    <ClCompile Include="Hcsign.c" />
+    <ClCompile Include="Hcenc.c" />
     <ClCompile Include="HashCalc.c" />
     <ClCompile Include="HashCheck.cpp" />
     <ClCompile Include="HashCheckCommon.c" />
@@ -213,6 +215,8 @@
     <ClInclude Include="CHashCheckClassFactory.hpp" />
     <ClInclude Include="GetHighMSB.h" />
     <ClInclude Include="globals.h" />
+    <ClInclude Include="Hcsign.h" />
+    <ClInclude Include="Hcenc.h" />
     <ClInclude Include="HashCalc.h" />
     <ClInclude Include="HashCheckCommon.h" />
     <ClInclude Include="HashCheckOptions.h" />

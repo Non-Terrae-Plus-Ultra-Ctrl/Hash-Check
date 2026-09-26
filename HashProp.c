@@ -848,6 +848,12 @@ VOID WINAPI HashPropDoSaveResults(PHASHPROPCONTEXT phpctx)
 
 		while (pItem = SLGetDataAndStep(phpctx->hList))
 			HashCalcWriteResult(phpctx, pItem);
+
+	// Sign the finished checksum file (1.4.4: HashCalcAppendSignature appends
+	// the "; pub=<...>" and "; sig=..." lines before closing), then seals
+	// everything into the encrypted container.
+	HashCalcAppendSignature(phpctx);
+	HashCalcEncryptFile(phpctx);
 	}
 
 	CloseHandle(phpctx->hFileOut);

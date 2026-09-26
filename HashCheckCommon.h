@@ -87,14 +87,7 @@ typedef struct {
 // Convenience wrappers
 HANDLE __fastcall OpenFileForReading( PCTSTR pszPath );
 
-// Parsing helpers
-VOID __fastcall HCNormalizeString( PTSTR psz );
-
-// Self-check helper: hash a buffer with a single algorithm (dwFlags == one
-// WHEX_CHECK bit), writing the lowercase hex result to szHexOut
-// (>= MAX_DIGEST_STRING_LENGTH TCHARs). Returns FALSE if dwFlags is not a
-// single known algorithm bit.
-BOOL WINAPI HashCheckSelfHash( DWORD dwFlags, const void* pvData, UINT cbBytes, PTSTR szHexOut );
+// Parsing helpers -- HCNormalizeString now lives in UnicodeHelpers.c/h
 
 // UI-related functions
 VOID WINAPI SetControlText( HWND hWnd, UINT uCtrlID, UINT uStringID );

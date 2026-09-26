@@ -17,6 +17,8 @@ extern "C" {
 #include <windows.h>
 #include "HashCheckOptions.h"
 #include "libs/WinHash.h"
+#include "Hcsign.h"
+#include "Hcenc.h"
 
 /**
  * Much of what is in the HashCalc module used to reside within HashProp; with
@@ -86,6 +88,7 @@ typedef struct {
 	TCHAR              szFormat[20]; // output format for wnsprintf
 	UINT               obScratch;    // offset, in bytes, to the scratch, for update coalescing
 	HASHCALCSCRATCH    scratch;      // scratch buffers
+	BOOL               bSignEnabled; // TRUE once the "; pub=" header succeeds; enables sig signing
 } HASHCALCCONTEXT, *PHASHCALCCONTEXT;
 
 // Per-file data
@@ -104,8 +107,9 @@ BOOL WINAPI HashCalcPrepare( PHASHCALCCONTEXT phcctx );
 VOID WINAPI HashCalcInitSave( PHASHCALCCONTEXT phcctx );
 VOID WINAPI HashCalcSetSaveFormat( PHASHCALCCONTEXT phcctx );
 BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem );
-VOID WINAPI HashCalcAppendSelfCheck( PHASHCALCCONTEXT phcctx );
 VOID WINAPI HashCalcAppendTimestamp( PHASHCALCCONTEXT phcctx );
+VOID WINAPI HashCalcAppendSignature( PHASHCALCCONTEXT phcctx );
+VOID WINAPI HashCalcEncryptFile( PHASHCALCCONTEXT phcctx );
 VOID WINAPI HashCalcClearInvalid( PWHRESULTEX pwhres, WCHAR cInvalid );
 BOOL WINAPI HashCalcDeleteFileByHandle( HANDLE hFile );
 VOID WINAPI HashCalcTogglePrep( PHASHCALCCONTEXT phcctx, BOOL bState );

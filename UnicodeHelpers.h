@@ -77,6 +77,19 @@ PBYTE __fastcall IsTextUTF8( PBYTE pbData );
 
 PWSTR __fastcall BufferToWStr( PBYTE *ppbData, DWORD cbData );
 
+/**
+ * HCNormalizeString - canonicalizes a string in-place for the signature
+ * pipeline (see HashCalcAppendSignature / HashVerifySignature): '\r' becomes
+ * '\n', '\t'/'"'/'*' become spaces, and '/' becomes '\'.  Both the signing
+ * side and the verifying side normalize the exact same way, so line-ending
+ * and cosmetic differences never invalidate a signature.  1.4.3: this
+ * helper lives here (not in HashCheckCommon) so the HashSign release tool
+ * and the pipeline test harness link the REAL implementation instead of a
+ * copy that could drift (see signer/hashsign.c).
+ **/
+
+VOID __fastcall HCNormalizeString( PTSTR psz );
+
 #ifdef __cplusplus
 }
 #endif

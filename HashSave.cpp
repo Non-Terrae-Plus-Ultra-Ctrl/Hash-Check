@@ -282,12 +282,19 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
     }
 #endif
 
-// Timestamp + self-check: append "; cn<...>" and "; selfcheck=<hash>" lines
-    // (skipped if the run was cancelled).
+// Timestamp + signature: append "; cn<...>" and (in HashCalcAppendSignature)
+    // the "; pub=<...>" and "; sig=..." lines (skipped if the run was
+    // cancelled; selfcheck stays removed since 1.4.3).
     if (phsctx->status != CANCEL_REQUESTED)
     {
         HashCalcAppendTimestamp(phsctx);
-        HashCalcAppendSelfCheck(phsctx);
+        // The signature (covering data + timestamp + pub line) is appended
+        // next, then the file is sealed into the encrypted container.
+        HashCalcAppendSignature(phsctx);
+
+        // Seal the signed plaintext file into the encrypted container; the
+        // on-disk file becomes non-plaintext (see Hcenc.h).
+        HashCalcEncryptFile(phsctx);
     }
 
 #ifdef USE_PPL

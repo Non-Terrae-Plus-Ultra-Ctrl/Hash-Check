@@ -9,10 +9,13 @@
  **/
 
 #include "globals.h"
+#include <bcrypt.h>
 #include "HashCheckCommon.h"
 #include "SetAppID.h"
 #include "UnicodeHelpers.h"
 #include "IsSSD.h"
+#include "Hcsign.h"
+#include "Hcenc.h"
 #include <uxtheme.h>
 #include <Strsafe.h>
 #include <cassert>
@@ -35,6 +38,7 @@
 #define HV_STATUS_MISMATCH   2
 #define HV_STATUS_UNREADABLE 3
 #define HV_STATUS_NEW        4
+#define HV_STATUS_DAMAGED     5   // 1.4.9: 损坏（逐条 chk 不符）
 
 #define LISTVIEW_EXSTYLES ( LVS_EX_HEADERDRAGDROP | \
                             LVS_EX_FULLROWSELECT  | \
@@ -117,9 +121,20 @@ typedef struct {
 	HASHVERIFYPREV     prev;         // previous update data, used for update coalescing
 	UINT               uMaxBatch;    // maximum number of updates to coalesce
     volatile DWORD     whctxFlags;   // WinHash library dwFlags (which checksums to use)
-	BOOL               bSelfcheckFailed; // checksum file failed its own self-check
+	BYTE               byKeyid;      // 1.4.3: keyid of the container half we decrypted (trust domain)
+	BYTE               byKeyidA;     // 1.4.7: keyid in container A's header, raw (surgical-repair evidence)
+	BYTE               byKeyidB;     // 1.4.7: keyid in container B's header, raw
+	DWORD              cbHalfRaw;    // 1.4.7: half length of the loaded file (surgical repair offset)
+	BOOL               bKeyidHeaderDamage; // 1.4.7: a header keyid byte contradicts the sig line -> offer surgical repair
+	BOOL               bUnsupportedFormat; // 1.4.3: not an HCK2 container (legacy plaintext / 1.4.1 HCK1) -- rejected, zero downgrade
+	BOOL               bForeignSigner; // 1.4.4: unknown signer -> TOFU prompt (non-terminal); file still opens
+	BOOL               bSignatureFailed; // ECDSA signature missing/invalid or pub line missing/malformed (tampered)
+	BOOL               bHasSignature;    // a valid signature was verified
+	BOOL               bDoubleTampered;  // double container: both halves damaged (already reported)
+	TCHAR              szForeignFingerprint[80]; // 1.4.4: fingerprint of an untrusted signer (banner, 64 hex + NUL)
 	TCHAR              szTimestamp[MAX_STRINGRES];  // "; cn<...>" timestamp embedded in the file
-	TCHAR              szStatus[5][MAX_STRINGRES];
+	TCHAR              szStatus[6][MAX_STRINGRES];
+	UINT               cDamaged;   // 1.4.9: 逐条 chk 定位到的损坏条目数
 } HASHVERIFYCONTEXT, *PHASHVERIFYCONTEXT;
 
 
@@ -129,6 +144,478 @@ typedef struct {
 \*============================================================================*/
 
 // Data parsing functions
+// Locate the signature line ("; sig=" at line start) in the normalized
+// file data; returns NULL if none.
+static PTSTR FindSigLine( PCTSTR pszData )
+{
+	const TCHAR *p = pszData;
+	const size_t cch = SSLen(TEXT("; sig="));
+
+	for (;;)
+	{
+		while (*p == TEXT(' '))
+			++p;
+
+		if (!*p)
+			return(NULL);
+
+		if (*p == TEXT(';') && StrCmpNI(p, TEXT("; sig="), (INT)cch) == 0)
+			return((PTSTR)p);
+
+		while (*p && *p != TEXT('\n'))
+			++p;
+		if (*p == TEXT('\n'))
+			++p;
+	}
+}
+
+
+// Extract the base64url token following "; <tag>=" on a line.
+static BOOL ExtractToken( PCTSTR pszLine, PCTSTR pszPrefix, PTSTR szOut, UINT cchOut )
+{
+	const TCHAR *p = pszLine + SSLen(pszPrefix);
+	UINT i = 0;
+
+	while (*p && *p != TEXT('\n') && *p != TEXT('\r') && *p != TEXT(' ') &&
+	       i < cchOut - 1)
+		szOut[i++] = *p++;
+	szOut[i] = 0;
+
+	return(i > 0);
+}
+
+
+// Locate the public key line ("; pub=" at line start) in the normalized
+// file data; returns NULL if none.  1.4.4: restored (the file-internal pub
+// is the root of transport-integrity verification for shared files).
+static PTSTR FindPubLine( PCTSTR pszData )
+{
+	const TCHAR *p = pszData;
+	const size_t cch = SSLen(TEXT("; pub="));
+
+	for (;;)
+	{
+		while (*p == TEXT(' '))
+			++p;
+
+		if (!*p)
+			return(NULL);
+
+		if (*p == TEXT(';') && StrCmpNI(p, TEXT("; pub="), (INT)cch) == 0)
+			return((PTSTR)p);
+
+		while (*p && *p != TEXT('\n'))
+			++p;
+		if (*p == TEXT('\n'))
+			++p;
+	}
+}
+
+
+// 1.4.4: TrustedSigners registry (TOFU persistence).  Fingerprints of
+// signers the user explicitly trusted, stored as values of subkeys under
+// HKCU\Software\HashCheck\TrustedSigners.
+static BOOL TrustedSignersHas( PCTSTR pszFp )
+{
+	HKEY   hKey;
+	LSTATUS lRet;
+
+	if (!pszFp || !*pszFp)
+		return(FALSE);
+
+	lRet = RegOpenKeyEx(HKEY_CURRENT_USER, TEXT("Software\\HashCheck\\TrustedSigners"),
+	                    0, KEY_READ, &hKey);
+	if (lRet != ERROR_SUCCESS)
+		return(FALSE);
+
+	lRet = RegQueryValueEx(hKey, pszFp, NULL, NULL, NULL, NULL);
+	RegCloseKey(hKey);
+	return(lRet == ERROR_SUCCESS);
+}
+
+static VOID TrustedSignersAdd( PCTSTR pszFp )
+{
+	HKEY  hKey;
+	DWORD dwOne = 1;
+
+	if (!pszFp || !*pszFp)
+		return;
+
+	if (RegCreateKeyEx(HKEY_CURRENT_USER, TEXT("Software\\HashCheck\\TrustedSigners"),
+	                   0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
+		return;
+
+	RegSetValueEx(hKey, pszFp, 0, REG_DWORD, (const BYTE*)&dwOne, sizeof(dwOne));
+	RegCloseKey(hKey);
+}
+
+__forceinline PBYTE WINAPI HashVerifyLoadData( PHASHVERIFYCONTEXT phvctx );
+// 1.4.4 分层信任验签（fail-closed + TOFU）：
+//   能走到这里的文件必然出自 HCK2 容器（非容器文件已在 HashVerifyLoadData
+//   拒收），而保存链必然写过 pub 行与 sig 行——任一缺失即被篡改。
+//     1. pub 行/sig 行缺失或畸形              -> bSignatureFailed（损坏，防剥签名）
+//     2. sig 行 keyid（GCM+签名保护）为唯一权威；容器头 keyid 与权威不符
+//        -> bKeyidHeaderDamage（外科修复：只写回坏的那 1 字节，不再按损坏拒收）
+//     3. pub 行公钥解码失败                   -> bSignatureFailed（损坏）
+//     4. 用文件内 pub 验签，挂                -> bSignatureFailed（传输途中被篡改）
+//     5. 签名者身份分层（验签已过，只影响提示层，不影响打开）：
+//          pub == DLL 内置作者公钥            -> 静默（发布级文件，硬信任）
+//          pub == 本机 KSP 公钥               -> 静默（本机生成的文件）
+//          指纹已在 TrustedSigners 注册表     -> 静默（用户曾点「信任」）
+//          其他                              -> bForeignSigner + szForeignFingerprint
+//                                               （TOFU 一问：是=信任+静默；否=仍打开+指纹常驻）
+static BYTE HexVal( TCHAR c )
+{
+	if (c >= TEXT('0') && c <= TEXT('9')) return((BYTE)(c - TEXT('0')));
+	if (c >= TEXT('A') && c <= TEXT('F')) return((BYTE)(c - TEXT('A') + 10));
+	if (c >= TEXT('a') && c <= TEXT('f')) return((BYTE)(c - TEXT('a') + 10));
+	return(0xFF);
+}
+
+VOID WINAPI HashVerifySignature( PHASHVERIFYCONTEXT phvctx )
+{
+	PTSTR pszData = phvctx->pszFileData;
+	PTSTR pszSig, pszPub;
+	TCHAR szSigEnc[MAX_DIGEST_STRING_LENGTH + 96];
+	TCHAR szPubEnc[MAX_DIGEST_STRING_LENGTH + 96];
+	PBYTE pbPub = NULL;
+	DWORD cbPub = 0;
+	UINT cbSigned;
+	BYTE byHi, byLo, bySigKeyid;
+
+	phvctx->bSignatureFailed = FALSE;
+	phvctx->bHasSignature    = FALSE;
+	phvctx->bForeignSigner   = FALSE;
+	phvctx->szForeignFingerprint[0] = 0;
+
+	if (!pszData)
+		return;
+
+	// fail-closed：pub 行与 sig 行都必需（防剥签名）
+	pszSig = FindSigLine(pszData);
+	pszPub = FindPubLine(pszData);
+	if (!pszSig || !pszPub)
+	{
+		phvctx->bSignatureFailed = TRUE;
+		return;
+	}
+
+	if (!ExtractToken(pszSig, TEXT("; sig="), szSigEnc, countof(szSigEnc)) ||
+	    !ExtractToken(pszPub, TEXT("; pub="), szPubEnc, countof(szPubEnc)))
+	{
+		phvctx->bSignatureFailed = TRUE;   // 行存在但 token 畸形 = 损坏
+		return;
+	}
+
+	// 解析 "XX:<b64>" 的 keyid 前缀（1.4.7: sig 行为唯一权威，头 keyid 仅为提示）
+	byHi = HexVal(szSigEnc[0]);
+	byLo = HexVal(szSigEnc[1]);
+	if (byHi == 0xFF || byLo == 0xFF || szSigEnc[2] != TEXT(':'))
+	{
+		phvctx->bSignatureFailed = TRUE;   // keyid 前缀畸形 = 损坏
+		return;
+	}
+	bySigKeyid = (BYTE)((byHi << 4) | byLo);
+
+	// 1.4.7: sig 行 keyid 在 GCM 密文 + 签名载荷之内（动它必挂签名）——唯一权威。
+	// 容器头 keyid 只是外层提示：任一头字节与权威不符 = 头部损坏 -> 外科修复，
+	// 不再按「损坏」拒收。信任路由本就按文件内 pub 走（1.4.4），改头冒充得不到
+	// 任何东西；sig 行与头全对不上也不可能（sig 行与头同源，同毁走 GCM 拦截）。
+	phvctx->bKeyidHeaderDamage =
+	    (phvctx->byKeyidA != bySigKeyid || phvctx->byKeyidB != bySigKeyid);
+
+	if (bySigKeyid != phvctx->byKeyid)
+		phvctx->byKeyid = bySigKeyid;   // 权威接管（坏字节的写回由 Thread 弹窗完成）
+
+	// pub 行公钥解码（文件内携带公钥——传输完整性的根基）
+	if (!HcsignImportPublicKey(szPubEnc, &pbPub, &cbPub))
+	{
+		phvctx->bSignatureFailed = TRUE;   // pub 畸形 = 损坏
+		return;
+	}
+
+	// Signed payload = everything up to (not including) the sig line
+	// (includes the pub line; identical to what the save chain signed).
+	cbSigned = (UINT)(pszSig - pszData) * sizeof(TCHAR);
+	if (!HcsignVerify((const BYTE*)pszData, cbSigned, pbPub, cbPub,
+	                   szSigEnc + 3))
+	{
+		free(pbPub);
+		phvctx->bSignatureFailed = TRUE;   // 传输途中被篡改
+		return;
+	}
+
+	// 身份分层（验签已过；只影响提示层，不影响打开）
+	{
+		BOOL bAuthor = FALSE, bLocal = FALSE;
+		UINT i;
+
+		// 作者域：pub == 内置公钥表任一条目（blob 逐字节比对）
+		for (i = 0; i < HCK_AUTHOR_KEY_COUNT && !bAuthor; ++i)
+		{
+			PBYTE pbTbl = NULL;
+			DWORD cbTbl = 0;
+
+			if (HcsignImportPublicKey(HCK_AUTHOR_KEYS[i].pubB64, &pbTbl, &cbTbl))
+			{
+				bAuthor = (cbPub == cbTbl && memcmp(pbPub, pbTbl, cbTbl) == 0);
+				free(pbTbl);
+			}
+		}
+
+		// 本机域：pub == 本机 KSP 公钥
+		if (!bAuthor)
+		{
+			PTSTR pszLocalB64 = NULL;
+
+			if (HcsignGetPublicKeyB64(&pszLocalB64))
+			{
+				PBYTE pbLocal = NULL;
+				DWORD cbLocal = 0;
+
+				if (HcsignImportPublicKey(pszLocalB64, &pbLocal, &cbLocal))
+				{
+					bLocal = (cbPub == cbLocal && memcmp(pbPub, pbLocal, cbLocal) == 0);
+					free(pbLocal);
+				}
+				LocalFree(pszLocalB64);
+			}
+		}
+
+		if (bAuthor || bLocal)
+		{
+			// 静默（发布级 / 本机生成）
+		}
+		else
+		{
+			// 已信任签名者（TrustedSigners 注册表）或陌生签名者（TOFU 一问）
+			TCHAR szFp[80];
+
+			if (HcsignFingerprintFromBlob(pbPub, cbPub, szFp, countof(szFp)) &&
+			    TrustedSignersHas(szFp))
+			{
+				// 静默（用户曾点「信任」）
+			}
+			else
+			{
+				phvctx->bForeignSigner = TRUE;   // Thread 弹 TOFU 一问，指纹条常驻
+				StringCchCopy(phvctx->szForeignFingerprint,
+				              countof(phvctx->szForeignFingerprint), szFp);
+			}
+		}
+	}
+
+	free(pbPub);
+	phvctx->bHasSignature = TRUE;   // 验签已过（身份分层只影响提示层）
+}
+
+// Open a sealed checksum file (encrypted container).  Double-container
+// layout: [seal A][seal B], same plaintext, independent random nonces.  The
+// GCM tag is the natural integrity judge -- the half that decrypts is intact.
+//   A and B intact      -> use A silently
+//   exactly one intact  -> offer repair: re-seal the good plaintext as a new
+//                          pair (with the survivor's keyid) and rewrite the
+//                          file, then continue with it
+//   both damaged        -> report "tampered" (bDoubleTampered, single dialog)
+// 1.4.5: header damage no longer misroutes the verdicts.  A file counts as a
+// pair when both halves' magic is intact (strict) OR B's half magic alone
+// survives (A's header destroyed) -- GCM judges the halves either way.  In the
+// single-container branch a whole-file decrypt failure falls back to "A as a
+// standalone container" (in a pair, A's tag sits right before the midpoint),
+// so a destroyed B header also reaches the repair path instead of a bare
+// "corrupted" verdict.  "Unsupported format" stays reserved for files that
+// carry no HCK2 magic at all (zero downgrade).
+// 1.4.10: deletion coverage on both layers -- the magic scan now starts at
+// offset 1 (a head-section deletion pushes intact B to offsets 1..33, which
+// the old offset-34 scan missed and misreported as "unsupported format"),
+// and HcencScanPrefixContainer rescues an intact A whose boundary drifted
+// off the midpoint when the deletion ate B's magic (no structural anchor
+// left to locate it; GCM adjudicates every candidate end).
+// On success *ppbRaw/*pcbRaw are replaced with the plaintext (old buffer
+// freed); on failure they are NULLed and the verdict flag is set.
+static BOOL HashVerifyOpenSealed( PHASHVERIFYCONTEXT phvctx,
+                                  PBYTE* ppbRaw, DWORD* pcbRaw )
+{
+	PBYTE pbRaw = *ppbRaw;
+	DWORD cbRaw = *pcbRaw;
+	PBYTE pbPlain = NULL, pbOther = NULL;
+	DWORD cbPlain = 0, cbOther = 0;
+	BYTE byKeyidA = 0xFF, byKeyidB = 0xFF;
+	DWORD cbSplit = 0;
+	BOOL bAok = FALSE, bBok = FALSE, bPairMode = FALSE;
+
+	/* 配对几何：严格双（两头魔数都在），或 B 半魔数在中点（A 头被毁），
+	   或 1.4.8 全文件扫描第二份魔数（单字节增删使 B 半偏离中点）。
+	   两半始终由各自的 GCM 标签裁决。 */
+	if (HcencIsDouble(pbRaw, cbRaw) || HcencIsHalfContainer(pbRaw, cbRaw))
+		cbSplit = cbRaw / 2;
+	else
+		cbSplit = HcencFindPairSplit(pbRaw, cbRaw);
+
+	if (cbSplit)
+	{
+		bPairMode = TRUE;
+		bAok = HcencDecrypt(pbRaw, cbSplit, &pbPlain, &cbPlain, &byKeyidA);
+		bBok = HcencDecrypt(pbRaw + cbSplit, cbRaw - cbSplit,
+		                    &pbOther, &cbOther, &byKeyidB);
+	}
+	else
+	{
+		/* Single container (e.g. a truncated pair): decrypt the whole file.
+		   If that fails, try "A as a standalone container" -- in a pair
+		   whose B header was destroyed, A is still complete (its tag sits
+		   right before the midpoint), so this reaches the repair path. */
+		if (HcencDecrypt(pbRaw, cbRaw, &pbPlain, &cbPlain, &phvctx->byKeyid))
+		{
+			/* 单容器（截断的双容器等）：无另一份可援，头 keyid 损坏时
+			   以 sig 行权威值打开（cbHalfRaw=0 -> 跳过 B 半修复定位） */
+			phvctx->byKeyidA = phvctx->byKeyid;
+			phvctx->byKeyidB = phvctx->byKeyid;
+			phvctx->cbHalfRaw = 0;
+			free(pbRaw);
+			*ppbRaw = pbPlain;
+			*pcbRaw = cbPlain;
+			return(TRUE);
+		}
+		if ((cbRaw & 1) == 0)
+			bAok = HcencDecrypt(pbRaw, cbRaw / 2, &pbPlain, &cbPlain,
+			                    &byKeyidA);
+
+		/* 1.4.10: B 的魔数被删除/摧毁但 A 完好——A 的边界随删除字节数
+		   漂移，中点与魔数全扫描都没有锚点（上面的半份兜底只对长度未
+		   漂移的文件成立）。逐候选终点 GCM 裁决（HcencScanPrefixContainer，
+		   ≤64KB 有界）：唯一通过者即幸存 A -> 修复通道。 */
+		if (!bAok)
+			bAok = HcencScanPrefixContainer(pbRaw, cbRaw, &pbPlain,
+			                                &cbPlain, &byKeyidA);
+	}
+
+	if (bAok && bBok)
+	{
+		/* Fully intact pair: use the primary copy, keep the file as-is.
+		   Half A leads the file, so its keyid is the header keyid.
+		   1.4.7: keep both raw header keyids + half length for the
+		   surgical keyid repair (see HashVerifySignature). */
+		phvctx->byKeyid  = byKeyidA;
+		phvctx->byKeyidA = byKeyidA;
+		phvctx->byKeyidB = byKeyidB;
+		phvctx->cbHalfRaw = cbSplit;
+		free(pbOther);
+		free(pbRaw);
+		*ppbRaw = pbPlain;
+		*pcbRaw = cbPlain;
+		return(TRUE);
+	}
+
+	if (bAok || bBok)
+	{
+		/* One copy damaged: offer to rebuild the pair from the survivor.
+		   The survivor's keyid is authoritative (the damaged copy's
+		   header cannot be trusted). */
+		PBYTE pbGood = bAok ? pbPlain : pbOther;
+		DWORD cbGood = bAok ? cbPlain : cbOther;
+
+		phvctx->byKeyid = bAok ? byKeyidA : byKeyidB;
+		phvctx->byKeyidA = phvctx->byKeyid;
+		phvctx->byKeyidB = phvctx->byKeyid;
+		phvctx->cbHalfRaw = cbSplit;
+
+		if (MessageBox(NULL,
+			L"检测到校验文件内容损坏，是否用完好副本尝试修复？",
+			NULL, MB_YESNO | MB_ICONQUESTION) == IDYES)
+		{
+			PBYTE pbNew = NULL;
+			DWORD cbNew = 0;
+
+			if (HcencEncryptPair(phvctx->byKeyid, pbGood, cbGood,
+			                     &pbNew, &cbNew))
+			{
+				HANDLE hOut = CreateFile(
+					phvctx->pszPath,
+					GENERIC_WRITE,
+					FILE_SHARE_READ,
+					NULL,
+					CREATE_ALWAYS,
+					FILE_ATTRIBUTE_NORMAL,
+					NULL
+				);
+
+				if (hOut != INVALID_HANDLE_VALUE)
+				{
+					DWORD cbWritten;
+					BOOL bW = WriteFile(hOut, pbNew, cbNew,
+					                    &cbWritten, NULL) &&
+					          cbWritten == cbNew;
+					CloseHandle(hOut);
+					MessageBox(NULL,
+						bW ? L"修复成功。" : L"修复失败。",
+						NULL,
+						bW ? MB_OK | MB_ICONINFORMATION
+						   : MB_OK | MB_ICONERROR);
+				}
+				else
+				{
+					MessageBox(NULL, L"修复失败。", NULL,
+					           MB_OK | MB_ICONERROR);
+				}
+				free(pbNew);
+			}
+			else
+			{
+				MessageBox(NULL, L"修复失败。", NULL,
+				           MB_OK | MB_ICONERROR);
+			}
+		}
+
+		if (pbPlain && pbPlain != pbGood) free(pbPlain);
+		if (pbOther && pbOther != pbGood) free(pbOther);
+		free(pbRaw);
+		*ppbRaw = pbGood;
+		*pcbRaw = cbGood;
+		return(TRUE);
+	}
+
+	/* Neither copy decrypts */
+	if (bPairMode)
+	{
+		/* 1.4.10: 假阳性防线——全扫描定位到的 split 可能只是密文里长得
+		   像魔数的随机字节（真单容器 ≥68B 被撞中会被误判成对）。整份
+		   解密再试一次：成功 = 真单容器直开；失败 = 真双坏。 */
+		if (HcencDecrypt(pbRaw, cbRaw, &pbPlain, &cbPlain,
+		                 &phvctx->byKeyid))
+		{
+			phvctx->byKeyidA = phvctx->byKeyid;
+			phvctx->byKeyidB = phvctx->byKeyid;
+			phvctx->cbHalfRaw = 0;
+			free(pbRaw);
+			*ppbRaw = pbPlain;
+			*pcbRaw = cbPlain;
+			return(TRUE);
+		}
+	}
+
+	if (pbPlain) free(pbPlain);
+	if (pbOther) free(pbOther);
+	free(pbRaw);
+	*ppbRaw = NULL;
+
+	if (bPairMode)
+	{
+		/* Pair with both halves damaged */
+		phvctx->bDoubleTampered = TRUE;
+		MessageBox(NULL,
+			L"校验文件被篡改（两份副本均损坏）。",
+			NULL, MB_OK | MB_ICONERROR);
+	}
+	else
+	{
+		/* Damaged single container (whole-file, half and prefix-scan
+		   attempts all failed) */
+		phvctx->bSignatureFailed = TRUE;   // -> "校验文件损坏或被修改"
+	}
+	return(FALSE);
+}
+
 __forceinline PBYTE WINAPI HashVerifyLoadData( PHASHVERIFYCONTEXT phvctx );
 VOID WINAPI HashVerifyParseData( PHASHVERIFYCONTEXT phvctx );
 BOOL WINAPI ValidateHexSequence( PTSTR psz, UINT cch );
@@ -153,7 +640,122 @@ VOID WINAPI HashVerifyDlgInit( PHASHVERIFYCONTEXT phvctx );
 VOID WINAPI HashVerifyUpdateSummary( PHASHVERIFYCONTEXT phvctx, PHASHVERIFYITEM pItem );
 
 // List management
-__forceinline VOID WINAPI HashVerifyListInfo( PHASHVERIFYCONTEXT phvctx, LPNMLVDISPINFO pdi );
+VOID WINAPI HashVerifyCopySelection( PHASHVERIFYCONTEXT phvctx );
+VOID WINAPI HashVerifyCopySelection( PHASHVERIFYCONTEXT phvctx )
+{
+	INT nIndex = -1;
+	UINT cSel = 0;
+	UINT cLen = 0, cbAlloc, cchAlloc;
+	PTSTR pszBuf, pszWrite;
+	UINT i;
+
+	// Count selected items with a non-empty expected hash, and measure text.
+	if (phvctx->hWndList == NULL)
+		return;
+
+	while ((nIndex = ListView_GetNextItem(phvctx->hWndList, nIndex, LVNI_SELECTED)) != -1)
+	{
+		if ((UINT)nIndex >= phvctx->cTotal)
+			continue;
+		PHASHVERIFYITEM pItem = phvctx->index[nIndex];
+		if (!pItem->pszExpected || !pItem->pszExpected[0])
+			continue;   // no expected checksum; nothing meaningful to copy
+		++cSel;
+		// Each item = [prefix] name CRLF hash CRLF
+		cLen += (UINT)lstrlen(pItem->pszDisplayName) +
+		        (UINT)lstrlen(pItem->pszExpected) + 4;   // two CRLFs
+	}
+
+	if (cSel == 0)
+		return;   // nothing to copy
+
+	// Buffer: numeric prefix "N." per line for multi-selection, then the
+	// item text, then the trailing NUL.
+	{
+		UINT cPrefix = 0;              // chars for the "N." prefix (single: 0)
+		if (cSel > 1)
+			cPrefix = (UINT)(cSel >= 10 ? 3 : 2);   // "1." = 2, "10." = 3
+
+		cbAlloc = (cLen + cSel * cPrefix + 1) * sizeof(TCHAR);
+		cchAlloc = cLen + cSel * cPrefix + 1;
+	}
+
+	if (cchAlloc > 0x100000)   // sanity: cap at ~1 MB
+		return;
+
+	pszBuf = (PTSTR)malloc(cbAlloc);
+	if (!pszBuf)
+		return;
+
+	pszWrite = pszBuf;
+	nIndex = -1;
+	i = 0;
+
+	while ((nIndex = ListView_GetNextItem(phvctx->hWndList, nIndex, LVNI_SELECTED)) != -1)
+	{
+		UINT cchLeft;
+
+		if ((UINT)nIndex >= phvctx->cTotal)
+			continue;
+		PHASHVERIFYITEM pItem = phvctx->index[nIndex];
+		if (!pItem->pszExpected || !pItem->pszExpected[0])
+			continue;
+
+		if (cSel > 1)
+		{
+			TCHAR szNum[16];
+			StringCchPrintf(szNum, countof(szNum), TEXT("%u."), i + 1);
+			cchLeft = (UINT)(cchAlloc - (UINT)(pszWrite - pszBuf));
+			StringCchCopy(pszWrite, cchLeft, szNum);
+			pszWrite += lstrlen(szNum);
+		}
+
+		cchLeft = (UINT)(cchAlloc - (UINT)(pszWrite - pszBuf));
+		StringCchCopy(pszWrite, cchLeft, pItem->pszDisplayName);
+		pszWrite += lstrlen(pItem->pszDisplayName);
+
+		cchLeft = (UINT)(cchAlloc - (UINT)(pszWrite - pszBuf));
+		StringCchCopy(pszWrite, cchLeft, TEXT("\r\n"));
+		pszWrite += 2;
+
+		cchLeft = (UINT)(cchAlloc - (UINT)(pszWrite - pszBuf));
+		StringCchCopy(pszWrite, cchLeft, pItem->pszExpected);
+		pszWrite += lstrlen(pItem->pszExpected);
+
+		cchLeft = (UINT)(cchAlloc - (UINT)(pszWrite - pszBuf));
+		StringCchCopy(pszWrite, cchLeft, TEXT("\r\n"));
+		pszWrite += 2;
+
+		++i;
+	}
+	*pszWrite = 0;
+
+	// Put it on the clipboard as Unicode text.
+	if (OpenClipboard(phvctx->hWnd))
+	{
+		HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE,
+		                    ((UINT)(pszWrite - pszBuf) + 1) * sizeof(TCHAR));
+		if (hMem)
+		{
+			PTSTR pszDst = (PTSTR)GlobalLock(hMem);
+			if (pszDst)
+			{
+				lstrcpy(pszDst, pszBuf);
+				GlobalUnlock(hMem);
+				EmptyClipboard();
+				if (SetClipboardData(CF_UNICODETEXT, hMem))
+					hMem = NULL;   // clipboard owns it now
+			}
+			if (hMem)
+				GlobalFree(hMem);
+		}
+		CloseClipboard();
+	}
+
+	free(pszBuf);
+}
+
+VOID WINAPI HashVerifyListInfo( PHASHVERIFYCONTEXT phvctx, LPNMLVDISPINFO pdi );
 __forceinline LONG_PTR WINAPI HashVerifySetColor( PHASHVERIFYCONTEXT phvctx, LPNMLVCUSTOMDRAW pcd );
 __forceinline LONG_PTR WINAPI HashVerifyFindItem( PHASHVERIFYCONTEXT phvctx, LPNMLVFINDITEM pfi );
 __forceinline VOID WINAPI HashVerifySortColumn( PHASHVERIFYCONTEXT phvctx, LPNMLISTVIEW plv );
@@ -193,6 +795,129 @@ VOID CALLBACK HashVerify_RunDLLW( HWND hWnd, HINSTANCE hInstance,
 	}
 }
 
+// 1.5.7: SHA-256 合并到 Hcenc.c（HcencSha256）——chk 双端同源防漂移
+#define HashVerifySha256 HcencSha256
+
+// 1.4.9: 行文本（已裁剪、NUL 终止）-> 规范化副本的 SHA-256 -> 64 位小写 hex
+static BOOL HashVerifyChkOfLine( PCTSTR pszLine, PTSTR szOut )
+{
+	static const TCHAR szHex[] = TEXT("0123456789abcdef");
+	PTSTR pszCopy;
+	BYTE byHash[32];
+	size_t cch;
+	UINT k;
+
+	if (!pszLine || !szOut)
+		return(FALSE);
+	cch = SSLen(pszLine);
+	if (!cch || cch > 0x8000)
+		return(FALSE);
+	pszCopy = (PTSTR)malloc((cch + 1) * sizeof(TCHAR));
+	if (!pszCopy)
+		return(FALSE);
+	memcpy(pszCopy, pszLine, (cch + 1) * sizeof(TCHAR));
+	HCNormalizeString(pszCopy);
+	if (!HashVerifySha256((const BYTE*)pszCopy, (DWORD)(cch * sizeof(TCHAR)), byHash))
+	{
+		free(pszCopy);
+		return(FALSE);
+	}
+	free(pszCopy);
+	for (k = 0; k < 32; ++k)
+	{
+		szOut[2*k]   = szHex[byHash[k] >> 4];
+		szOut[2*k+1] = szHex[byHash[k] & 15];
+	}
+	szOut[64] = 0;
+	return(TRUE);
+}
+
+// 1.5.3: SHA-256("") 的十六进制。1.4.9~1.5.2 保存端 bug（取「\n 之后」
+// 拿到空行）把每条 chk 都写成了这个值——验证端遇到它视为「无定位器」：
+// 不标不计数（等价于没有 chk 行），旧文件打开不再整清单误标。真数据行
+// 非空，其 chk 不可能是空串哈希；蓄意写它=主动放弃定位=按无定位器拒收。
+static const TCHAR szChkEmptySha[] =
+    TEXT("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+
+// 1.4.9: 逐条定位——数据行的下一行是 "; chk=" 且与本行 chk 不符 = 该条损坏。
+// chk 无密钥可重算：蓄意篡改者重算 chk 使本函数返回 0，Thread 据此守门。
+static UINT HashVerifyCountDamagedLines( PCTSTR pszData )
+{
+	UINT cDamaged = 0;
+	const TCHAR *p = pszData;
+
+	if (!p)
+		return(0);
+
+	while (*p)
+	{
+		const TCHAR *pszLine = p;
+		const TCHAR *pszEnd;
+		const TCHAR *pszNext;
+
+		while (*p && *p != TEXT('\n'))
+			++p;
+		pszEnd = p;
+		while (pszEnd > pszLine && (pszEnd[-1] == TEXT('\r') || pszEnd[-1] == TEXT(' ')))
+			--pszEnd;
+		pszNext = (*p == TEXT('\n')) ? p + 1 : p;
+
+		while (*pszLine == TEXT(' '))
+			++pszLine;
+
+		if (*pszLine && *pszLine != TEXT(';') && pszEnd > pszLine)
+		{
+			const TCHAR *q = pszNext;
+
+			/* 1.5.2: 规范化把行尾 CRLF 变成 \n\n（\r→\n 保留原 \n），
+			   每条数据行后都隔着一个空行——配对必须跳过这些规范化伪影
+			   空行，否则「下一行是 ; chk=」永远不成立，逐条定位整体失效 */
+			while (*q == TEXT(' ') || *q == TEXT('\n'))
+				++q;
+
+			if (q[0] == TEXT(';') && _tcsnicmp(q, TEXT("; chk="), 6) == 0)
+			{
+				TCHAR szExpect[65];
+				const TCHAR *r = q + 6;
+				int i;
+
+				for (i = 0; i < 64 && *r && *r != TEXT('\n') &&
+				     *r != TEXT('\r') && *r != TEXT(' '); ++i)
+					szExpect[i] = *r++;
+				szExpect[i] = 0;
+
+				/* 1.5.3: 空串哈希指纹（旧版保存端 bug）= 无定位器，跳过 */
+				if (i == 64 && lstrcmpi(szExpect, szChkEmptySha) != 0)
+				{
+					TCHAR szActual[65];
+					size_t cch = pszEnd - pszLine;
+
+					if (cch && cch < 0x8000)
+					{
+						PTSTR pszCopy = (PTSTR)malloc((cch + 1) * sizeof(TCHAR));
+
+						if (pszCopy)
+						{
+							memcpy(pszCopy, pszLine, cch * sizeof(TCHAR));
+							pszCopy[cch] = 0;
+							if (HashVerifyChkOfLine(pszCopy, szActual) &&
+							    lstrcmpi(szExpect, szActual) != 0)
+								++cDamaged;
+							free(pszCopy);
+						}
+					}
+				}
+			}
+		}
+
+		if (!*pszNext)
+			break;
+		p = pszNext;
+	}
+
+	return(cDamaged);
+}
+
 DWORD WINAPI HashVerifyThread( PTSTR pszPath )
 {
 	// We will need to free the memory allocated for the data when done
@@ -217,50 +942,170 @@ DWORD WINAPI HashVerifyThread( PTSTR pszPath )
 	// Load the raw data
 	pbRawData = HashVerifyLoadData(&hvctx);
 
-	if (hvctx.bSelfcheckFailed)
+	// 1.4.4 fail-closed verdicts, in priority order.  bDoubleTampered /
+	// bUnsupportedFormat / bSignatureFailed are terminal; bForeignSigner is
+	// a TOFU prompt after which the file opens either way.
+	if (hvctx.bDoubleTampered)
 	{
-		// "The checksum file is corrupted or modified" (Chinese via UCNs)
-		MessageBox(NULL, L"\u6821\u9A8C\u6587\u4EF6\u635F\u574F\u6216\u88AB\u4FEE\u6539",
+		// 双容器两半全坏：OpenSealed 已弹「校验文件被篡改」，不再重复
+	}
+	else if (hvctx.bUnsupportedFormat)
+	{
+		// 无任何 HCK2 魔数（古老格式 / 魔数被篡改毁 / 文本编辑器重编码全灭）：
+		// 零降级拒收。与「损坏」弹窗共用一条文案——魔数没了就没有证据区分
+		// 「曾是本产品文件」与「从未见过的格式」，分开表述只会误导用户去升级
+		MessageBox(NULL, L"文件已损坏或被篡改\r\n可能安装版本不匹配",
 		           NULL, MB_OK | MB_ICONERROR);
 	}
-	else if (hvctx.pszFileData && (hvctx.hList = SLCreateEx(TRUE)))
+	else if (hvctx.bSignatureFailed)
 	{
-		HashVerifyParseData(&hvctx);
+		// 1.4.9: 验签挂——逐条 chk 定位损坏条目（意外损坏特征）。
+		// chk 能定位 = 继续/退出；chk 全过（蓄意重算）= 整档拒收
+		hvctx.cDamaged = HashVerifyCountDamagedLines(hvctx.pszFileData);
 
-		// Remember how many files came from the manifest itself: only those are
-		// hashed.  Files found on disk but absent from the manifest are appended
-		// by the scan below and shown as "新增" without being hashed.
-		hvctx.cOrigTotal = hvctx.cTotal;
+		if (hvctx.cDamaged)
+		{
+			TCHAR szMsg[0x100];
 
-		// Scan the manifest's folder for "newly-added" files
-		HashVerifyScanForNewFiles(&hvctx);
+			StringCchPrintf(szMsg, countof(szMsg),
+			                L"检测到 %u 条校验记录损坏（其余条目仍可用）。\r\n\r\n是否继续查看？",
+			                hvctx.cDamaged);
 
-		// Flag manifest files that no longer exist on disk as "缺失" up front,
-		// so they show as missing the moment the dialog opens (mirrors the
-		// "新增" scan above)
-		HashVerifyScanForMissingFiles(&hvctx);
-
-		DialogBoxParam(
-			g_hModThisDll,
-			MAKEINTRESOURCE(IDD_HASHVERF),
-			NULL,
-			HashVerifyDlgProc,
-			(LPARAM)&hvctx
-		);
-
-		SLRelease(hvctx.hList);
-		if (hvctx.hNewPaths)
-			SLRelease(hvctx.hNewPaths);
+			if (MessageBox(NULL, szMsg, NULL, MB_YESNO | MB_ICONQUESTION) == IDYES)
+				hvctx.bSignatureFailed = FALSE;   // 继续：损坏条紫底「损坏」
+			// 点否：用户选择退出，静默关闭
+		}
+		else
+		{
+			// pub/sig 行缺失或畸形、GCM 挂或验签挂且无法定位：与「不支持版本」
+			// 共用同一弹窗（1.5.5 合并）——用户视角两者都是「这文件坏了」
+			MessageBox(NULL, L"文件已损坏或被篡改\r\n可能安装版本不匹配",
+			           NULL, MB_OK | MB_ICONERROR);
+		}
 	}
-	else if (*pszPath)
+
+	if (!hvctx.bDoubleTampered && !hvctx.bUnsupportedFormat && !hvctx.bSignatureFailed)
 	{
-		// Technically, we could reach this point by either having a file read
-		// error or a memory allocation error, but I really don't feel like
-		// doing separate messages for what are supposed to be rare edge cases.
-		TCHAR szFormat[MAX_STRINGRES], szMessage[0x100];
-		LoadString(g_hModThisDll, IDS_HV_LOADERROR_FMT, szFormat, countof(szFormat));
-		StringCchPrintf(szMessage, countof(szMessage), szFormat, pszPath);
-		MessageBox(NULL, szMessage, NULL, MB_OK | MB_ICONERROR);
+		// 1.4.7: 头部 keyid 字节损坏（另一份完好即可还原）——外科手术式只写回
+		// 坏的那 1 字节（A 半偏移 5；双容器的 B 半偏移 半长+5）。修不修都不影响打开。
+		if (hvctx.bKeyidHeaderDamage)
+		{
+			if (MessageBox(NULL,
+				L"检测到校验文件头部标识损坏，是否修复？",
+				NULL, MB_YESNO | MB_ICONQUESTION) == IDYES)
+			{
+				HANDLE hFile = CreateFile(
+					hvctx.pszPath,
+					GENERIC_READ | GENERIC_WRITE,
+					FILE_SHARE_READ,
+					NULL,
+					OPEN_EXISTING,
+					FILE_ATTRIBUTE_NORMAL,
+					NULL
+				);
+				BOOL bFixed = FALSE;
+
+				if (hFile != INVALID_HANDLE_VALUE)
+				{
+					LARGE_INTEGER cbSize;
+
+					if (GetFileSizeEx(hFile, &cbSize) && !cbSize.HighPart)
+					{
+						BYTE           by = hvctx.byKeyid;   // 权威值（sig 行裁决）
+						BYTE           buf;
+						DWORD          cbIO;
+						LARGE_INTEGER  li;
+
+						li.QuadPart = 5;   // A 半 keyid
+						SetFilePointerEx(hFile, li, NULL, FILE_BEGIN);
+						if (ReadFile(hFile, &buf, 1, &cbIO, NULL) && cbIO == 1 && buf != by)
+						{
+							SetFilePointerEx(hFile, li, NULL, FILE_BEGIN);
+							WriteFile(hFile, &by, 1, &cbIO, NULL);
+						}
+
+						if (hvctx.cbHalfRaw &&
+						    (DWORD)cbSize.LowPart >= hvctx.cbHalfRaw + 5)
+						{
+							li.QuadPart = (LONGLONG)hvctx.cbHalfRaw + 5;   // B 半 keyid
+							SetFilePointerEx(hFile, li, NULL, FILE_BEGIN);
+							if (ReadFile(hFile, &buf, 1, &cbIO, NULL) && cbIO == 1 && buf != by)
+							{
+								SetFilePointerEx(hFile, li, NULL, FILE_BEGIN);
+								WriteFile(hFile, &by, 1, &cbIO, NULL);
+							}
+						}
+						bFixed = TRUE;
+					}
+					CloseHandle(hFile);
+				}
+				MessageBox(NULL,
+					bFixed ? L"修复成功。" : L"修复失败。",
+					NULL,
+					bFixed ? MB_OK | MB_ICONINFORMATION : MB_OK | MB_ICONERROR);
+			}
+			// 点否：仍正常打开（内容与签名均完好）
+		}
+
+		// 1.4.4: 陌生签名者 -> TOFU 一问（非终局）：是 = 写入 TrustedSigners，
+		// 此后同指纹静默；否 = 仍正常打开，指纹条常驻（分享需求下拒绝=没用）
+		if (hvctx.bForeignSigner)
+		{
+			TCHAR szMsg[0x100];
+
+			StringCchPrintf(szMsg, countof(szMsg),
+			                L"此校验文件由其他设备签发（指纹 %s）。\r\n\r\n"
+			                L"是否信任该签名者？（信任后同指纹文件不再询问）",
+			                hvctx.szForeignFingerprint);
+
+			if (MessageBox(NULL, szMsg, NULL,
+			               MB_YESNO | MB_ICONQUESTION) == IDYES)
+			{
+				TrustedSignersAdd(hvctx.szForeignFingerprint);
+				hvctx.bForeignSigner = FALSE;   // 信任 -> 静默（指纹条不显示）
+			}
+			// 点否：bForeignSigner 保持，指纹条在验证窗口常驻
+		}
+
+		if (hvctx.pszFileData && (hvctx.hList = SLCreateEx(TRUE)))
+		{
+			HashVerifyParseData(&hvctx);
+
+			// Remember how many files came from the manifest itself: only those are
+			// hashed.  Files found on disk but absent from the manifest are appended
+			// by the scan below and shown as "新增" without being hashed.
+			hvctx.cOrigTotal = hvctx.cTotal;
+
+			// Scan the manifest's folder for "newly-added" files
+			HashVerifyScanForNewFiles(&hvctx);
+
+			// Flag manifest files that no longer exist on disk as "缺失" up front,
+			// so they show as missing the moment the dialog opens (mirrors the
+			// "新增" scan above)
+			HashVerifyScanForMissingFiles(&hvctx);
+
+			DialogBoxParam(
+				g_hModThisDll,
+				MAKEINTRESOURCE(IDD_HASHVERF),
+				NULL,
+				HashVerifyDlgProc,
+				(LPARAM)&hvctx
+			);
+
+			SLRelease(hvctx.hList);
+			if (hvctx.hNewPaths)
+				SLRelease(hvctx.hNewPaths);
+		}
+		else if (*pszPath)
+		{
+			// Technically, we could reach this point by either having a file read
+			// error or a memory allocation error, but I really don't feel like
+			// doing separate messages for what are supposed to be rare edge cases.
+			TCHAR szFormat[MAX_STRINGRES], szMessage[0x100];
+			LoadString(g_hModThisDll, IDS_HV_LOADERROR_FMT, szFormat, countof(szFormat));
+			StringCchPrintf(szMessage, countof(szMessage), szFormat, pszPath);
+			MessageBox(NULL, szMessage, NULL, MB_OK | MB_ICONERROR);
+		}
 	}
 
 	free(pbRawData);
@@ -298,72 +1143,6 @@ DWORD WINAPI HashVerifyAlgFromExt( PCTSTR pszPath )
 	return(0);
 }
 
-// Locate the self-check line ("; selfcheck=" at the start of a line) in the
-// normalized file data; returns NULL if there is none.
-static PTSTR FindSelfCheckLine( PCTSTR pszData )
-{
-	const TCHAR *p = pszData;
-	const size_t cch = SSLen(TEXT("; selfcheck="));
-
-	for (;;)
-	{
-		while (*p == TEXT(' '))
-			++p;
-
-		if (!*p)
-			return(NULL);
-
-		if (*p == TEXT(';') && StrCmpNI(p, TEXT("; selfcheck="), (INT)cch) == 0)
-			return((PTSTR)p);
-
-		// Advance to the next line
-		while (*p && *p != TEXT('\n'))
-			++p;
-		if (*p == TEXT('\n'))
-			++p;
-	}
-}
-
-// Returns TRUE if the file's embedded self-check matches (or if there is no
-// self-check line, e.g. a file from another tool), FALSE if it was modified.
-BOOL WINAPI HashVerifySelfCheck( PHASHVERIFYCONTEXT phvctx )
-{
-	DWORD dwAlg;
-	PTSTR pszData = phvctx->pszFileData;
-	PTSTR pszSc;
-	TCHAR szExpected[MAX_DIGEST_STRING_LENGTH];
-	TCHAR szActual[MAX_DIGEST_STRING_LENGTH];
-	const TCHAR *p;
-	UINT i;
-
-	if (!pszData)
-		return(TRUE);
-
-	if (!(dwAlg = HashVerifyAlgFromExt(phvctx->pszPath)))
-		return(TRUE);   // can't determine the algorithm; skip self-check
-
-	if (!(pszSc = FindSelfCheckLine(pszData)))
-		return(TRUE);   // no self-check line (old/foreign file)
-
-	// Extract the expected hex following "; selfcheck=" (lower-cased)
-	p = pszSc + SSLen(TEXT("; selfcheck="));
-	i = 0;
-	while (*p && *p != TEXT('\n') && *p != TEXT('\r') && *p != TEXT(' ') &&
-	       i < MAX_DIGEST_STRING_LENGTH - 1)
-	{
-		TCHAR ch = *p++;
-		if (ch >= TEXT('A') && ch <= TEXT('F'))
-			ch += 0x20;
-		szExpected[i++] = ch;
-	}
-	szExpected[i] = 0;
-
-	if (!HashCheckSelfHash(dwAlg, pszData, (UINT)(pszSc - pszData) * sizeof(TCHAR), szActual))
-		return(TRUE);
-
-	return(StrCmpI(szExpected, szActual) == 0);
-}
-
 PBYTE WINAPI HashVerifyLoadData( PHASHVERIFYCONTEXT phvctx )
 {
 	PBYTE pbRawData = NULL;
@@ -383,6 +1162,32 @@ PBYTE WINAPI HashVerifyLoadData( PHASHVERIFYCONTEXT phvctx )
 			// reserved a DWORD at the end for NULL termination and to serve as
 			// the extra buffer needed by IsTextUTF8...
 			*((UPDWORD)(pbRawData + cbRawData.LowPart)) = 0;
+
+			// 1.4.5 fail-closed: this build only opens v2 (HCK2) sealed
+			// containers.  Legacy plaintext checksum files and 1.4.1-era
+			// HCK1 containers are rejected as "unsupported format" -- zero
+			// downgrade paths.  Sealed files carry double-container
+			// redundancy; a damaged half (or a damaged half header) is
+			// repaired from the other half (see HashVerifyOpenSealed).
+			if (HcencIsContainer(pbRawData, cbRawData.LowPart) ||
+			    HcencIsHalfContainer(pbRawData, cbRawData.LowPart) ||
+			    HcencFindPairSplit(pbRawData, cbRawData.LowPart))
+			{
+				phvctx->byKeyid = HcencGetKeyid(pbRawData, cbRawData.LowPart);
+				if (!HashVerifyOpenSealed(phvctx, &pbRawData,
+				                          &cbRawData.LowPart))
+				{
+					CloseHandle(hFile);
+					return(NULL);
+				}
+			}
+			else
+			{
+				phvctx->bUnsupportedFormat = TRUE;
+				free(pbRawData);
+				CloseHandle(hFile);
+				return(NULL);
+			}
 
 			// Prepare the data for the parser...
 			phvctx->pszFileData = BufferToWStr(&pbRawData, cbRawData.LowPart);
@@ -417,8 +1222,10 @@ PBYTE WINAPI HashVerifyLoadData( PHASHVERIFYCONTEXT phvctx )
 				}
 			}
 
-			// Self-check the file's own integrity (see HashCalcAppendSelfCheck)
-			phvctx->bSelfcheckFailed = ! HashVerifySelfCheck(phvctx);
+			// 1.4.3: selfcheck is gone -- the signature covers the whole
+			// payload.  Verify the embedded "; sig=<keyid>:<b64>" line; in a
+			// fail-closed world it must exist and must verify.
+			HashVerifySignature(phvctx);
 		}
 
 		CloseHandle(hFile);
@@ -465,6 +1272,13 @@ VOID WINAPI HashVerifyParseData( PHASHVERIFYCONTEXT phvctx )
 		PTSTR pszEndOfLine;    // Last non-whitespace character of the line
 		PTSTR pszChecksum = NULL, pszFileName = NULL;
 		INT16 cchPath;         // This INCLUDES the NULL terminator!
+		PCTSTR pszChkLine;     // 1.5.2: complete line text for the per-line chk
+		                       // (Step 2 advances pszStartOfLine past the checksum --
+		                       //  and SFV mode even writes NULs into the line -- so
+		                       //  the chk hash is computed HERE in Step 1 while the
+		                       //  line is still intact, exactly as HashCalc did)
+		TCHAR  szChkActual[65];
+		BOOL   bChkReady = FALSE;
 
 		// Step 1: Isolate the current line as a NULL-terminated string
 		{
@@ -489,6 +1303,13 @@ VOID WINAPI HashVerifyParseData( PHASHVERIFYCONTEXT phvctx )
 			// ...and from the start of the line
 			while (*pszStartOfLine == TEXT(' '))
 				++pszStartOfLine;
+
+			// 1.5.2: freeze the trimmed complete line NOW and hash it while
+			// the buffer is still intact -- Step 2 advances pszStartOfLine
+			// and SFV mode writes NULs into the line. ~3us/line, one-shot.
+			pszChkLine = pszStartOfLine;
+			bChkReady  = (*pszChkLine && *pszChkLine != TEXT(';')) &&
+			              HashVerifyChkOfLine(pszChkLine, szChkActual);
 
 			// Skip past this line's terminator; point at the remaining data
 			++pszData;
@@ -612,6 +1433,38 @@ VOID WINAPI HashVerifyParseData( PHASHVERIFYCONTEXT phvctx )
 			pItem->szActual[0] = 0;
 
 			++phvctx->cTotal;
+
+			// 1.4.9: 下一行是本条的 "; chk=" 注释——不符 = 该条损坏：
+			// 紫底「损坏」、哈希列隐藏、不入哈希队列。
+			// 1.5.2: 规范化把 CRLF 变 \n\n，pszData 此刻指向的是数据行
+			// 终结符后的「空行」——用独立指针跳过伪影空行再判前缀。
+			{
+				const TCHAR *pszPeek = pszData;
+
+				while (*pszPeek == TEXT(' ') || *pszPeek == TEXT('\n'))
+					++pszPeek;
+
+				if (pszPeek[0] == TEXT(';') && _tcsnicmp(pszPeek, TEXT("; chk="), 6) == 0)
+				{
+					TCHAR szExpect[65];
+					const TCHAR *r = pszPeek + 6;
+					int i;
+
+					for (i = 0; i < 64 && *r && *r != TEXT('\n') &&
+					     *r != TEXT('\r') && *r != TEXT(' '); ++i)
+						szExpect[i] = *r++;
+					szExpect[i] = 0;
+
+					/* 1.5.3: 空串哈希指纹（旧版保存端 bug）= 无定位器，跳过 */
+					if (i == 64 && lstrcmpi(szExpect, szChkEmptySha) != 0)
+					{
+						if (bChkReady && lstrcmpi(szExpect, szChkActual) != 0)
+						{
+							pItem->uStatusID = HV_STATUS_DAMAGED;
+						}
+					}
+				}
+			}
 
 		} // If the current line was found to be valid
 
@@ -1202,7 +2055,9 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 			phvctx->hWndPBFile  = GetDlgItem(hWnd, IDC_PROG_FILE);
 
 			// Initialize the summary; progress covers only the manifest's files
-			SendMessage(phvctx->hWndPBTotal, PBM_SETRANGE32, 0, phvctx->cOrigTotal - phvctx->cMissing);
+			SendMessage(phvctx->hWndPBTotal, PBM_SETRANGE32, 0,
+			(phvctx->cOrigTotal > phvctx->cMissing + phvctx->cDamaged) ?
+				phvctx->cOrigTotal - phvctx->cMissing - phvctx->cDamaged : 0);
 			SendMessage(phvctx->hWndPBTotal, PBM_SETPOS, 0, 0);
 			HashVerifyUpdateSummary(phvctx, NULL);
 
@@ -1303,6 +2158,17 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 
 				switch (pnm->code)
 				{
+						case LVN_KEYDOWN:
+						{
+							if (((LPNMLVKEYDOWN)lParam)->wVKey == (WPARAM)'C' &&
+							    (GetKeyState(VK_CONTROL) < 0))
+							{
+								HashVerifyCopySelection(phvctx);
+								return(TRUE);
+							}
+							break;
+						}
+
 					case LVN_GETDISPINFO:
 					{
 						HashVerifyListInfo(phvctx, (LPNMLVDISPINFO)lParam);
@@ -1435,6 +2301,18 @@ VOID WINAPI HashVerifyDlgInit( PHASHVERIFYCONTEXT phvctx )
 		SetDlgItemText(hWnd, IDC_TIME_RESULTS, phvctx->szTimestamp);
 	}
 
+	// 1.4.4: fingerprint banner for untrusted signers (the user chose not to
+	// trust in the TOFU prompt) -- stays visible for the whole session
+	if (phvctx->szForeignFingerprint[0])
+	{
+		TCHAR szBanner[160];
+
+		StringCchPrintf(szBanner, countof(szBanner),
+		                L"签名者：其他设备（指纹 %s）——请核对来源后再使用",
+		                phvctx->szForeignFingerprint);
+		SetDlgItemText(hWnd, IDC_FP_BANNER, szBanner);
+	}
+
 	// Set the window icon and title
 	{
 		PTSTR pszFileName = StrRChr(phvctx->pszPath, NULL, TEXT('\\'));
@@ -1526,11 +2404,15 @@ VOID WINAPI HashVerifyDlgInit( PHASHVERIFYCONTEXT phvctx )
 	{
 		UINT i;
 
-		for (i = 1; i <= 4; ++i)
+		for (i = 1; i <= 5; ++i)
 		{
+			// 1.5.3: DAMAGED 的资源 ID（0x4416）不在这个连续序列里
+			// （1.4.9 因 0x4410 与 IDS_HV_NEW 撞号挪走）——连续公式
+			// 会把「新增:」按钮串加载进状态列，特判改用真 ID
 			LoadString(
 				g_hModThisDll,
-				i + (IDS_HV_STATUS_MATCH - 1),
+				(i == HV_STATUS_DAMAGED) ? IDS_HV_STATUS_DAMAGED
+				                         : i + (IDS_HV_STATUS_MATCH - 1),
 				phvctx->szStatus[i],
 				countof(phvctx->szStatus[i])
 			);
@@ -1681,7 +2563,10 @@ VOID WINAPI HashVerifyListInfo( PHASHVERIFYCONTEXT phvctx, LPNMLVDISPINFO pdi )
 			case HV_COL_FILENAME: pdi->item.pszText = pItem->pszDisplayName;              break;
 			case HV_COL_SIZE:     pdi->item.pszText = pItem->filesize.sz;                 break;
 			case HV_COL_STATUS:   pdi->item.pszText = phvctx->szStatus[pItem->uStatusID]; break;
-			case HV_COL_EXPECTED: pdi->item.pszText = pItem->pszExpected;                 break;
+			case HV_COL_EXPECTED: pdi->item.pszText =
+			                      (pItem->uStatusID == HV_STATUS_DAMAGED)
+			                      ? (PTSTR)TEXT("")
+			                      : pItem->pszExpected;                              break;
 			case HV_COL_ACTUAL:   pdi->item.pszText = pItem->szActual;                    break;
 			default:              pdi->item.pszText = TEXT("");                           break;
 		}
@@ -1779,14 +2664,19 @@ LONG_PTR WINAPI HashVerifySetColor( PHASHVERIFYCONTEXT phvctx, LPNMLVCUSTOMDRAW 
 							pcd->clrTextBk = RGB(0xC0, 0x00, 0x00);
 							break;
 
-						case HV_STATUS_UNREADABLE:
-							pcd->clrText = RGB(0x00, 0x00, 0x00);
-							pcd->clrTextBk = RGB(0xFF, 0xE0, 0x00);
+						case HV_STATUS_UNREADABLE:   // 缺失（1.4.9 深黄底白字）
+							pcd->clrText = RGB(0xFF, 0xFF, 0xFF);
+							pcd->clrTextBk = RGB(0xC8, 0xA0, 0x00);
 							break;
 
-						case HV_STATUS_NEW:
-							pcd->clrText = RGB(0x00, 0x00, 0x00);
-							pcd->clrTextBk = RGB(0x87, 0xCE, 0xFA);
+						case HV_STATUS_NEW:          // 新增（1.4.9 钢蓝底白字）
+							pcd->clrText = RGB(0xFF, 0xFF, 0xFF);
+							pcd->clrTextBk = RGB(0x1E, 0x5E, 0x8C);
+							break;
+
+						case HV_STATUS_DAMAGED:      // 损坏（1.4.9 深紫底白字）
+							pcd->clrText = RGB(0xFF, 0xFF, 0xFF);
+							pcd->clrTextBk = RGB(0x6A, 0x00, 0xA8);
 							break;
 					}
 				}
