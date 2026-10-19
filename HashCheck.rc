@@ -97,8 +97,8 @@ IDD_HASHVERF DIALOGEX 0, 0, 400, 262
     EXSTYLE  WS_EX_APPWINDOW
     FONT     9, "Microsoft YaHei UI"
 {
-    LTEXT           "", IDC_FP_BANNER,           7,   7, 340, 12
-    PUSHBUTTON      "", IDC_MAINTAIN,           353,   6,  40, 13, WS_TABSTOP
+    // 1.7.1: banner 恢复全宽 386（1.6.5 缩 340 让位回填）；维护按钮挪底与开始/完成并列三键等大
+    LTEXT           "", IDC_FP_BANNER,           7,   7, 386, 12
     CONTROL         "", IDC_LIST, "SysListView32", WS_TABSTOP | WS_GROUP | WS_BORDER | LVS_OWNERDATA | LVS_REPORT | LVS_SHOWSELALWAYS, 7, 21, 386, 156
     GROUPBOX        "", IDC_SUMMARY,              7, 184, 386, 50, WS_GROUP
     LTEXT           "", IDC_MATCH_LABEL,         13, 195,  56,  8
@@ -113,8 +113,9 @@ IDD_HASHVERF DIALOGEX 0, 0, 400, 262
     RTEXT           "", IDC_PENDING_RESULTS,    73, 219, 104,  8
     LTEXT           "", IDC_TIME_LABEL,        223, 219,  56,  8
     RTEXT           "", IDC_TIME_RESULTS,      283, 219, 104,  8
-    CONTROL         "", IDC_PROG_TOTAL, "msctls_progress32", PBS_SMOOTH, 7, 241, 278, 6
-    CONTROL         "", IDC_PROG_FILE,  "msctls_progress32", PBS_SMOOTH, 7, 249, 278, 6
+    CONTROL         "", IDC_PROG_TOTAL, "msctls_progress32", PBS_SMOOTH, 7, 241, 224, 6
+    CONTROL         "", IDC_PROG_FILE,  "msctls_progress32", PBS_SMOOTH, 7, 249, 224, 6
+    PUSHBUTTON      "", IDC_MAINTAIN,          235, 241,  50, 14, WS_TABSTOP
     PUSHBUTTON      "", IDC_PAUSE,              289, 241,  50, 14, WS_TABSTOP | WS_GROUP
     PUSHBUTTON      "", IDC_STOP,               343, 241,  50, 14, WS_TABSTOP
 }
