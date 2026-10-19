@@ -12,7 +12,6 @@
 #include "HashCheckCommon.h"
 #include "HashCalc.h"
 #include "UnicodeHelpers.h"
-#include "Hcenc.h"
 #include "libs/WinHash.h"
 #include <Strsafe.h>
 #include <stdlib.h>
@@ -45,8 +44,7 @@ static BOOL WINAPI HashCalcWriteCommentLine( PHASHCALCCONTEXT phcctx, PCTSTR psz
 
 
 
-// 1.5.7: SHA-256 合并到 Hcenc.c（HcencSha256）——chk 双端同源防漂移
-#define HashCalcSha256 HcencSha256
+// 1.6.9: HashCalcSha256 宏随 chk 铲除（HcencSha256 唯一消费方即 chk，已随链移出构建）
 
 /*============================================================================*\
 	Path processing
@@ -421,8 +419,7 @@ BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem )
     PVOID pvLine;                       // will be pointed to the buffer to write out
     size_t cbLine;                      // will be line length in bytes, EXCLUDING nul terminator
     BOOL bRetval = TRUE;
-    TCHAR szChkBody[72];                // 1.4.9: "chk=<64 hex>" per-line integrity
-    BOOL bWriteChk = FALSE;
+    // 1.6.9: szChkBody/bWriteChk 随 chk 功能链铲除
 
 	// If the checksum to save isn't present in the results
     if (! ((1 << (phcctx->ofn.nFilterIndex - 1)) & pItem->results.dwFlags))
@@ -458,66 +455,10 @@ BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem )
                       _T("; Elapsed: %d ms\r\n"), pItem->dwElapsed);
 #endif
 
-	// 1.4.9/1.5.6: 逐条 chk——数据行 = 本块最后一个 '\n' 之后（UNREADABLE
-	// 前置注释行在它前面）；裁尾必须在「副本」上做。1.5.3 曾直接在
-	// szTbuffer 本体上裁尾，把数据行的 \r\n 行尾从写盘内容里裁丢——数据行
-	// 与 chk 注释行连成一体，验证端把 "; chk=..." 当文件名的一部分，整清单
-	// 「缺失/新增」无法校验。1.4.9 的原始病（取「\n 之后」拿到行尾 NUL，
-	// chk 全是空串哈希）由「先裁尾再取行」解决，此处只是把裁尾搬到副本。
-	{
-		PTSTR pszLast;
-		PTSTR pScan;
-		PTSTR pszCopy;
-		size_t cchBuf, cchLast;
-
-		cchBuf = SSLen(szTbuffer);
-		pszCopy = (PTSTR)malloc((cchBuf + 1) * sizeof(TCHAR));
-
-		if (pszCopy)
-		{
-			BYTE byHash[32];
-
-			memcpy(pszCopy, szTbuffer, (cchBuf + 1) * sizeof(TCHAR));
-			while (cchBuf && (pszCopy[cchBuf-1] == TEXT('\r') ||
-			                  pszCopy[cchBuf-1] == TEXT('\n') ||
-			                  pszCopy[cchBuf-1] == TEXT(' ')))
-				pszCopy[--cchBuf] = 0;
-
-			pszLast = pszCopy;
-			for (pScan = pszCopy; *pScan; ++pScan)
-			{
-				if (*pScan == TEXT('\n'))
-					pszLast = pScan + 1;
-			}
-
-			cchLast = SSLen(pszLast);
-			if (cchLast && cchLast <= 0x8000)
-			{
-				HCNormalizeString(pszLast);
-
-				// 1.6.0: chk 逐条定位器回归（1.5.7 管线，零加密零签名形态下
-				// 的行级完整性定位——损坏可定位到条目）。验证端 chk 配对
-				// 与条目配色在 1.4.0 纯净版一直保留，此处接回即全功能。
-				if (HashCalcSha256((const BYTE*)pszLast,
-				                   (DWORD)(cchLast * sizeof(TCHAR)), byHash))
-				{
-					static const TCHAR szHex[] = TEXT("0123456789abcdef");
-					UINT k;
-
-					SSCpy(szChkBody, TEXT("chk="));
-					for (k = 0; k < 32; ++k)
-					{
-						szChkBody[4 + 2*k]     = szHex[byHash[k] >> 4];
-						szChkBody[4 + 2*k + 1] = szHex[byHash[k] & 15];
-					}
-					szChkBody[68] = 0;
-					bWriteChk = TRUE;
-				}
-			}
-
-			free(pszCopy);
-		}
-	}
+	// 1.6.9: chk 逐条定位器铲除（铁驭令：无签名形态下 chk 防不了篡改——
+	// 改哈希行重算 chk 即自洽，功能链整拆）。保存端不再计算/写出 chk 行；
+	// 行视图裁尾块随 chk 一并退役（其唯一使命就是给 chk 取行文本）。
+	// 验证端保留 "; chk=" 行的静默跳过——1.4.9+/1.6.x 旧带 chk 文件照常打开。
 
 	cchLine = MAX_PATH_BUFFER - cchLine;  // from now on cchLine is the line length in bytes, EXCLUDING nul terminator
 	if (cchLine > 0)
@@ -572,10 +513,6 @@ BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem )
 			INT cbWritten;
 			WriteFile(phcctx->hFileOut, pvLine, (DWORD)cbLine, &cbWritten, NULL);
 			if (cbLine != cbWritten) return(FALSE);
-
-			// 1.4.9: 数据行成功写出 -> 紧跟本条 chk 注释行
-			if (bWriteChk && !HashCalcWriteCommentLine(phcctx, szChkBody))
-				return(FALSE);
 		}
 		else return(FALSE);
 	}
