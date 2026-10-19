@@ -12,10 +12,10 @@
 #define HASHCHECK_NAME_STR "HashCheck Shell Extension"
 
 // Full version: MUST be in the form of major,minor,revision,build
-#define HASHCHECK_VERSION_FULL 1,7,1,0
+#define HASHCHECK_VERSION_FULL 1,7,2,0
 
 // String version: May be any suitable string
-#define HASHCHECK_VERSION_STR "1.7.1"
+#define HASHCHECK_VERSION_STR "1.7.2"
 
 #ifdef _USRDLL
 // PE version: MUST be in the form of major.minor

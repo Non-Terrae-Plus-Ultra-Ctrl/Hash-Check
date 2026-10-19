@@ -2882,17 +2882,11 @@ LONG_PTR WINAPI HashVerifySetColor( PHASHVERIFYCONTEXT phvctx, LPNMLVCUSTOMDRAW 
 					pcd->clrText = RGB(0x80, 0x80, 0x80);
 					break;
 
-				case HV_STATUS_STALE:   // 1.7.0 存疑整行白字（紫底在下方统一着色）
-					pcd->clrText = RGB(0xFF, 0xFF, 0xFF);
-					break;
-
 				default:
 					pcd->clrText = CLR_DEFAULT;
 			}
 
 			pcd->clrTextBk = CLR_DEFAULT;
-			if (pItem->uStatusID == HV_STATUS_STALE)   // 1.7.0 存疑整行紫底（更名自「已变化」，替换原橙红标）
-				pcd->clrTextBk = RGB(0x6A, 0x00, 0xA8);
 
 			// The status column, however, deserves special treatment
 			if (pcd->iSubItem == HV_COL_STATUS)
@@ -2931,7 +2925,7 @@ LONG_PTR WINAPI HashVerifySetColor( PHASHVERIFYCONTEXT phvctx, LPNMLVCUSTOMDRAW 
 						// 1.6.9: HV_STATUS_DAMAGED 着色分支随 chk 铲除
 
 
-						case HV_STATUS_STALE:        // 存疑（1.7.0 更名+整行紫底，与黄缺失/蓝新增同惯例）
+						case HV_STATUS_STALE:        // 存疑（1.7.2 收敛为状态列紫底白字，与黄缺失/蓝新增同惯例；1.7.0 曾整行紫）
 							pcd->clrText = RGB(0xFF, 0xFF, 0xFF);
 							pcd->clrTextBk = RGB(0x6A, 0x00, 0xA8);
 							break;
