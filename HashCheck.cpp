@@ -325,15 +325,15 @@ HRESULT Install( BOOL bRegisterUninstaller, BOOL bCopyFile )
             {
                 for (UINT i = 0; i < countof(szFormerHashExtsTab); ++i)
                 {
-                    HKEY hKey;
+                    HKEY hKeyExt;  // 1.4.0 优化三遍：消 C4456 遮蔽（原 hKey 遮蔽外层同名句柄）
 
-                    if (hKey = RegOpen(HKEY_CLASSES_ROOT, szFormerHashExtsTab[i], NULL, FALSE))
+                    if (hKeyExt = RegOpen(HKEY_CLASSES_ROOT, szFormerHashExtsTab[i], NULL, FALSE))
                     {
                         TCHAR szTemp[countof(PROGID_STR_HashCheck)];
-                        RegGetSZ(hKey, NULL, szTemp, sizeof(szTemp));
+                        RegGetSZ(hKeyExt, NULL, szTemp, sizeof(szTemp));
                         if (_tcscmp(szTemp, PROGID_STR_HashCheck) == 0)
-                            RegDeleteValue(hKey, NULL);
-                        RegCloseKey(hKey);
+                            RegDeleteValue(hKeyExt, NULL);
+                        RegCloseKey(hKeyExt);
                     }
                 }
             }

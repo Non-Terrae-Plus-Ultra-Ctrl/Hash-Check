@@ -44,6 +44,7 @@
 #define IDC_TIME_LABEL                  413
 #define IDC_TIME_RESULTS                414
 #define IDC_FP_BANNER                   415
+#define IDC_MAINTAIN                    416
 #define IDC_EXIT                        IDCANCEL
 
 // Options dialog

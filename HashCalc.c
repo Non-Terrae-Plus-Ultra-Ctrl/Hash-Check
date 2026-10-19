@@ -42,7 +42,6 @@ __forceinline BOOL WINAPI IsDoubleSlashPath( PCTSTR pszPath );
 // Save helpers
 __forceinline VOID WINAPI HashCalcSetSavePrefix( PHASHCALCCONTEXT phcctx, PTSTR pszSave );
 static BOOL WINAPI HashCalcWriteCommentLine( PHASHCALCCONTEXT phcctx, PCTSTR pszComment );
-static BOOL WINAPI HashCalcWriteSignatureHeader( PHASHCALCCONTEXT phcctx );
 
 
 
@@ -373,8 +372,7 @@ VOID WINAPI HashCalcInitSave( PHASHCALCCONTEXT phcctx )
 
 			// Provision file signing: make sure the local signing key
 			// exists up front.  The signature itself is appended by
-			// HashCalcAppendSignature() after all lines are in.
-			HashCalcWriteSignatureHeader(phcctx);
+			// 1.4.0 纯净版：无签名层，不预备签名密钥。
 		}
 		else
 		{
@@ -497,6 +495,9 @@ BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem )
 			{
 				HCNormalizeString(pszLast);
 
+				// 1.6.0: chk 逐条定位器回归（1.5.7 管线，零加密零签名形态下
+				// 的行级完整性定位——损坏可定位到条目）。验证端 chk 配对
+				// 与条目配色在 1.4.0 纯净版一直保留，此处接回即全功能。
 				if (HashCalcSha256((const BYTE*)pszLast,
 				                   (DWORD)(cchLast * sizeof(TCHAR)), byHash))
 				{
@@ -672,246 +673,7 @@ VOID WINAPI HashCalcAppendTimestamp( PHASHCALCCONTEXT phcctx )
 }
 
 
-// Provision signing for a new checksum file (called from HashCalcInitSave,
-// right after the BOM).  1.4.4: the file carries a pub= line (the local KSP
-// public key, written by HashCalcAppendSignature) and a sig= line; the
-// verifier verifies with the in-file pub and layers signer identity
-// (author table / local KSP / TrustedSigners / TOFU).  selfcheck stays
-// removed (1.4.3).  Here we only make sure the local signing key exists;
-// the signature itself is appended by HashCalcAppendSignature at the end.
-// Returns TRUE if signing is provisioned; FALSE if the key could not
-// be created (HashCalcEncryptFile then aborts the save, fail-closed).
-static BOOL WINAPI HashCalcWriteSignatureHeader( PHASHCALCCONTEXT phcctx )
-{
-	if (!HcsignEnsureKey())
-		return FALSE;
 
-	phcctx->bSignEnabled = TRUE;
-	return TRUE;
-}
-
-// Sign the just-finished checksum file: re-read its raw contents, decode and
-// normalize them exactly as the verifier will, sign that normalized text with
-// the per-user signing key (ECDSA P-256, SHA-256 inside HcsignSign), and
-// append the "; sig=<keyid>:<base64url signature>" line.  The signature
-// covers every line that came before it (the hash lines and the timestamp)
-// so any tampering invalidates the signature.
-VOID WINAPI HashCalcAppendSignature( PHASHCALCCONTEXT phcctx )
-{
-	HANDLE hFile;
-	LARGE_INTEGER cbSize;
-	DWORD cbLen, cbRead;
-	PBYTE pbData;
-	PWSTR pszW;
-	PTSTR pszSig = NULL;
-
-	if (!phcctx->bSignEnabled)
-		return;   // no pub= header (key unavailable); leave the file plain
-
-	if ((hFile = OpenFileForReading(phcctx->ofn.lpstrFile)) == INVALID_HANDLE_VALUE)
-		return;
-
-	if (!GetFileSizeEx(hFile, &cbSize) || cbSize.HighPart)
-	{
-		CloseHandle(hFile);
-		return;
-	}
-
-	cbLen = cbSize.LowPart;
-
-	if (!(pbData = (PBYTE)malloc(cbLen + sizeof(DWORD))))
-	{
-		CloseHandle(hFile);
-		return;
-	}
-
-	if (cbLen && (!ReadFile(hFile, pbData, cbLen, &cbRead, NULL) || cbRead != cbLen))
-	{
-		free(pbData);
-		CloseHandle(hFile);
-		return;
-	}
-
-	CloseHandle(hFile);
-
-	// Null-terminate the buffer for the decoder (mirrors HashVerifyLoadData)
-	*((UPDWORD)(pbData + cbLen)) = 0;
-
-	if (!(pszW = BufferToWStr(&pbData, cbLen)))
-	{
-		free(pbData);
-		return;
-	}
-
-	// 1.4.4: pub 行回归——签名载荷 = 「原文 + "; pub=<b64>\r\n"」（原始形态）整体
-	// 规范化后的结果，与验证端 normalize（sig 行前内容）字节一致。
-	// 注意：HCNormalizeString 逐字符替换（\r->\n 保留原 \n），\r\n 会变成 \n\n——
-	// 所以载荷必须先拼原始 \r\n 形态再整体规范化，绝不能先规范化再拼 \n。
-	// 任一步失败 -> bSignEnabled 置 FALSE -> HashCalcEncryptFile 删文件（fail-closed）。
-	{
-		PTSTR pszPub = NULL;
-
-		if (HcsignGetPublicKeyB64(&pszPub))
-		{
-			size_t cch = SSLen(pszW);
-			PWSTR pszPayload = (PWSTR)malloc((cch + SSLen(pszPub) + 16) * sizeof(TCHAR));
-
-			if (pszPayload)
-			{
-				memcpy(pszPayload, pszW, cch * sizeof(TCHAR));
-				memcpy(pszPayload + cch, TEXT("; pub="), 6 * sizeof(TCHAR));
-				cch += 6;
-				memcpy(pszPayload + cch, pszPub, SSLen(pszPub) * sizeof(TCHAR));
-				cch += SSLen(pszPub);
-				pszPayload[cch++] = TEXT('\r');
-				pszPayload[cch++] = TEXT('\n');
-				pszPayload[cch]   = 0;
-
-				HCNormalizeString(pszPayload);   /* 整体规范化（与验证端一致） */
-
-				if (HcsignSign((const BYTE*)pszPayload, (DWORD)(cch * sizeof(TCHAR)), &pszSig))
-				{
-					TCHAR szComment[(MAX_DIGEST_STRING_LENGTH + 16) + 32];
-
-					// pub 行（本机 KSP 公钥——接收方用它验签，传输完整性的根基）
-					StringCchPrintf(szComment, countof(szComment), TEXT("pub=%s"), pszPub);
-					HashCalcWriteCommentLine(phcctx, szComment);
-
-					// sig 行带 keyid（与容器头双写互校验，1.4.3 保留）。
-					// NOTE: %02X (hex) -- the verifier parses the prefix as hex,
-					// and the writer/reader must agree byte-for-byte.
-					StringCchPrintf(szComment, countof(szComment), TEXT("sig=%02X:%s"),
-					                (UINT)HCK_KEYID_LOCAL, pszSig);
-					HashCalcWriteCommentLine(phcctx, szComment);
-				}
-				else
-					phcctx->bSignEnabled = FALSE;   // fail-closed
-
-				free(pszPayload);
-			}
-			else
-				phcctx->bSignEnabled = FALSE;   // fail-closed
-		}
-		else
-			phcctx->bSignEnabled = FALSE;   // fail-closed（EncryptFile 删文件）
-
-		if (pszPub)
-			LocalFree(pszPub);
-	}
-	if (pszSig)
-		LocalFree(pszSig);
-
-	free(pbData);
-}
-
-// Seal the just-finished checksum file into the encrypted container: read the
-// whole plaintext file back (data lines + timestamp + signature), encrypt it
-// with the built-in AES-256-GCM key (see Hcenc.c), and overwrite
-// the file with the container.  The on-disk file becomes non-plaintext; the
-// verifier detects the container magic and decrypts before parsing.  On any
-// failure the file is deleted -- never leave an unencrypted checksum file
-// behind.  hFileOut is closed first (its sharing mode forbids a second
-// write handle); the later close by the caller sees INVALID and is a no-op.
-VOID WINAPI HashCalcEncryptFile( PHASHCALCCONTEXT phcctx )
-{
-	HANDLE hFile, hOut;
-	LARGE_INTEGER cbSize;
-	DWORD cbRead, cbWritten;
-	PBYTE pbPlain = NULL;
-	PBYTE pbEnc = NULL;
-	DWORD cbEnc = 0;
-	BOOL bOk = FALSE;
-
-	// 1.4.3 fail-closed: an unsigned checksum file would be REJECTED by the
-	// verifier of this build (sealed files must carry a "; sig=" line), so if
-	// signing could not be provisioned, never write the file at all.
-	if (!phcctx->bSignEnabled)
-	{
-		MessageBox(NULL, L"签名密钥不可用，已取消保存校验文件。",
-		           NULL, MB_OK | MB_ICONERROR);
-		goto fail_nofile;
-	}
-
-	if (phcctx->hFileOut != INVALID_HANDLE_VALUE)
-	{
-		CloseHandle(phcctx->hFileOut);
-		phcctx->hFileOut = INVALID_HANDLE_VALUE;
-	}
-
-	if ((hFile = OpenFileForReading(phcctx->ofn.lpstrFile)) == INVALID_HANDLE_VALUE)
-		goto fail;
-
-	if (!GetFileSizeEx(hFile, &cbSize) || cbSize.HighPart)
-	{
-		CloseHandle(hFile);
-		goto fail;
-	}
-
-	pbPlain = (PBYTE)malloc(cbSize.LowPart ? cbSize.LowPart : 1);
-	if (!pbPlain)
-	{
-		CloseHandle(hFile);
-		goto fail;
-	}
-
-	if (cbSize.LowPart &&
-	    (!ReadFile(hFile, pbPlain, cbSize.LowPart, &cbRead, NULL) ||
-	     cbRead != cbSize.LowPart))
-	{
-		CloseHandle(hFile);
-		goto fail;
-	}
-	CloseHandle(hFile);
-
-	// 1.4.2: seal twice with independent random nonces -> [seal A][seal B]
-	// (double-container redundancy).  1.4.3: the keyid (local-machine KSP
-	// trust domain) is written into each container header; the verifier
-	// cross-checks it against the "; sig=XX:" prefix (see Hcenc.h).
-	if (!HcencEncryptPair(HCK_KEYID_LOCAL, pbPlain, cbSize.LowPart,
-	                      &pbEnc, &cbEnc))
-		goto fail;
-
-	hOut = CreateFile(
-		phcctx->ofn.lpstrFile,
-		GENERIC_WRITE,
-		FILE_SHARE_READ,
-		NULL,
-		CREATE_ALWAYS,
-		FILE_ATTRIBUTE_NORMAL,
-		NULL
-	);
-	if (hOut == INVALID_HANDLE_VALUE)
-		goto fail;
-
-	bOk = WriteFile(hOut, pbEnc, cbEnc, &cbWritten, NULL) &&
-	      cbWritten == cbEnc;
-	CloseHandle(hOut);
-
-	if (bOk)
-	{
-		free(pbPlain);
-		free(pbEnc);
-		return;
-	}
-
-fail:
-	if (pbPlain) free(pbPlain);
-	if (pbEnc)   free(pbEnc);
-	DeleteFile(phcctx->ofn.lpstrFile);
-	MessageBox(NULL, L"加密校验文件失败，已删除输出文件。",
-	           NULL, MB_OK | MB_ICONERROR);
-	return;
-
-fail_nofile:
-	// !bSignEnabled path: close the still-open plaintext output handle and
-	// delete the file -- never leave an unsigned plaintext behind.
-	if (phcctx->hFileOut != INVALID_HANDLE_VALUE)
-	{
-		CloseHandle(phcctx->hFileOut);
-		phcctx->hFileOut = INVALID_HANDLE_VALUE;
-	}
-	DeleteFile(phcctx->ofn.lpstrFile);
-}
 
 VOID WINAPI HashCalcClearInvalid( PWHRESULTEX pwhres, WCHAR cInvalid )
 {

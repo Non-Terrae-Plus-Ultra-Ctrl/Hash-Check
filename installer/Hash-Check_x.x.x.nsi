@@ -186,6 +186,13 @@ Section
     IntOp $R0 1 << $AlgSelIndex
     WriteRegDWORD HKCU "Software\HashCheck" "Checksums" $R0
 
+    ; 重启询问演化史（防复辟档案）：1.4.0 优化三遍 #5 加装中杀 explorer→1.6.2/1.6.4 两代
+    ; 修补三次实弹卡死铁驭桌面→1.6.6 铁驭令改装后重启询问→1.6.8 铁驭令「把自作多情的
+    ; 弹窗去掉」：一切重启询问拆除。装中不碰 explorer（DLL 经改名替换落盘，旧版继续
+    ; 可用）；SetRebootFlag false 压掉 MUI 完成页「立即/稍后重启」二选一；新版在下次
+    ; 自然重启时生效，安装器全程零打扰——模板与 1.6.8 交付脚本同步防复辟。
+    SetRebootFlag false
+
     Return
 
     abort_on_error:

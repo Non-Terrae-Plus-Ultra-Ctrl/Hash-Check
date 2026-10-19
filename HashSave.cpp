@@ -202,7 +202,7 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
         // Indicate which hash type we are after, see WHEX... values in WinHash.h
         whctx.dwFlags = 1 << (phsctx->ofn.nFilterIndex - 1);
 
-        PBYTE pbBuffer;
+        PBYTE pbBuffer = NULL;  // 1.4.0 优化三遍：消 C4701（非 PPL 路径不使用，初始化以防未来手滑）
 #ifdef USE_PPL
         if (bMultithreaded)
         {
@@ -288,13 +288,8 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
     if (phsctx->status != CANCEL_REQUESTED)
     {
         HashCalcAppendTimestamp(phsctx);
-        // The signature (covering data + timestamp + pub line) is appended
-        // next, then the file is sealed into the encrypted container.
-        HashCalcAppendSignature(phsctx);
 
-        // Seal the signed plaintext file into the encrypted container; the
-        // on-disk file becomes non-plaintext (see Hcenc.h).
-        HashCalcEncryptFile(phsctx);
+        // 1.4.0 纯净版：无签名层，明文落盘即完成。
     }
 
 #ifdef USE_PPL
