@@ -1725,6 +1725,143 @@ static UINT HashVerifyMaintDetect( PHASHVERIFYCONTEXT phvctx )
 	return(cStale);
 }
 
+// 1.7.0 右键「添加」：重算单个 NEW 行的哈希写入期望值 → 行态变 MATCH。
+// 就地替换 pszExpected（竞技场节点内指针重指向新 hex 缓冲，write-once 不变量保持）。
+static UINT HashVerifyCtxAddSel( PHASHVERIFYCONTEXT phvctx )
+{
+	INT nIndex = -1;
+	UINT cDone = 0, cFailed = 0;
+
+	while ((nIndex = ListView_GetNextItem(phvctx->hWndList, nIndex, LVNI_SELECTED)) != -1)
+	{
+		PHASHVERIFYITEM pItem;
+		TCHAR szFull[MAX_PATH];
+		WIN32_FILE_ATTRIBUTE_DATA fad;
+		WHRESULTEX whres;
+		FILESIZE fs;
+		PTSTR pszHex;
+		UINT cbHex;
+		PTSTR pszNew;
+
+		if ((UINT)nIndex >= phvctx->cTotal)
+			continue;
+		pItem = phvctx->index[nIndex];
+		if (!pItem || pItem->uStatusID != HV_STATUS_NEW)
+			continue;   // 只作用于新增行
+		HashVerifyBuildFullPath(phvctx, pItem, szFull, countof(szFull));
+		if (!HashVerifyMaintHashOne(phvctx, szFull, &whres, &fs))
+		{
+			++cFailed;
+			continue;   // 行内报错不中断
+		}
+		pszHex = HashVerifyMaintResultHex(&whres);
+		if (!pszHex)
+		{
+			++cFailed;
+			continue;
+		}
+		cbHex = ((UINT)lstrlen(pszHex) + 1) * sizeof(TCHAR);
+		pszNew = (PTSTR)SLAddItem(phvctx->hList, NULL, cbHex);
+		if (!pszNew)
+		{
+			++cFailed;
+			continue;
+		}
+		memcpy(pszNew, pszHex, cbHex);
+		pItem->pszExpected = pszNew;
+		pItem->filesize = fs;
+		StringCbCopy(pItem->szActual, sizeof(pItem->szActual), pszHex);
+		// mtime 基线随收录落地（漏记=后续「检测变化」对该行永久失明）
+		if (GetFileAttributesExW(szFull, GetFileExInfoStandard, &fad))
+			pItem->ftModified = ((ULONGLONG)fad.ftLastWriteTime.dwHighDateTime << 32)
+			                  |  fad.ftLastWriteTime.dwLowDateTime;
+		if (pItem->uStatusID == HV_STATUS_NEW && phvctx->cNew)
+			--phvctx->cNew;
+		++phvctx->cMatch;
+		pItem->uStatusID = HV_STATUS_MATCH;
+		++cDone;
+	}
+	if (cDone)
+	{
+		HashVerifyOrigSnapshotFree(phvctx);
+		HashVerifyUpdateSummary(phvctx, NULL);
+		InvalidateRect(phvctx->hWndList, NULL, FALSE);
+	}
+	return(cFailed ? (cDone | 0x8000) : cDone);
+}
+
+// 1.7.0 右键「更新」：重算单个 MISMATCH 行哈希覆写期望值+mtime/大小基线
+// → 行态变 MATCH（存疑不给——轻检嫌疑态先重算落地再谈）。
+static UINT HashVerifyCtxUpdateSel( PHASHVERIFYCONTEXT phvctx )
+{
+	INT nIndex = -1;
+	UINT cDone = 0, cFailed = 0;
+
+	while ((nIndex = ListView_GetNextItem(phvctx->hWndList, nIndex, LVNI_SELECTED)) != -1)
+	{
+		PHASHVERIFYITEM pItem;
+		TCHAR szFull[MAX_PATH];
+		WIN32_FILE_ATTRIBUTE_DATA fad;
+		WHRESULTEX whres;
+		FILESIZE fs;
+		PTSTR pszHex;
+
+		if ((UINT)nIndex >= phvctx->cTotal)
+			continue;
+		pItem = phvctx->index[nIndex];
+		if (!pItem || pItem->uStatusID != HV_STATUS_MISMATCH)
+			continue;   // 只作用于不符行
+		HashVerifyBuildFullPath(phvctx, pItem, szFull, countof(szFull));
+		if (!HashVerifyMaintHashOne(phvctx, szFull, &whres, &fs))
+		{
+			++cFailed;
+			continue;
+		}
+		pszHex = HashVerifyMaintResultHex(&whres);
+		if (!pszHex)
+		{
+			++cFailed;
+			continue;
+		}
+		/* 等长原位覆写（1.6.7 维护保存同款）；短旧档塞不下走新节点兜底 */
+		if ((UINT)lstrlen(pszHex) <= (UINT)lstrlen(pItem->pszExpected))
+		{
+			StringCbCopy(pItem->pszExpected,
+			             ((UINT)lstrlen(pItem->pszExpected) + 1) * sizeof(TCHAR),
+			             pszHex);
+		}
+		else
+		{
+			UINT cbHex = ((UINT)lstrlen(pszHex) + 1) * sizeof(TCHAR);
+			PTSTR pszNew = (PTSTR)SLAddItem(phvctx->hList, NULL, cbHex);
+			if (!pszNew)
+			{
+				++cFailed;
+				continue;
+			}
+			memcpy(pszNew, pszHex, cbHex);
+			pItem->pszExpected = pszNew;
+		}
+		pItem->filesize = fs;
+		StringCbCopy(pItem->szActual, sizeof(pItem->szActual), pszHex);
+		if (GetFileAttributesExW(szFull, GetFileExInfoStandard, &fad))
+			pItem->ftModified = ((ULONGLONG)fad.ftLastWriteTime.dwHighDateTime << 32)
+			                  |  fad.ftLastWriteTime.dwLowDateTime;
+		if (pItem->uStatusID == HV_STATUS_MISMATCH && phvctx->cMismatch)
+			--phvctx->cMismatch;
+		++phvctx->cMatch;
+		pItem->uStatusID = HV_STATUS_MATCH;
+		++cDone;
+	}
+	if (cDone)
+	{
+		HashVerifyOrigSnapshotFree(phvctx);
+		HashVerifyUpdateSummary(phvctx, NULL);
+		InvalidateRect(phvctx->hWndList, NULL, FALSE);
+	}
+	return(cFailed ? (cDone | 0x8000) : cDone);
+}
+
 // 保存维护：重算 变化/未验 条目 + 原位改写（temp+替换，绝不出半档）
 static BOOL HashVerifyMaintSave( PHASHVERIFYCONTEXT phvctx )
 {
@@ -2001,7 +2138,7 @@ VOID WINAPI HashVerifyMaintainMenu( PHASHVERIFYCONTEXT phvctx )
 		case 4:
 			c = HashVerifyMaintDetect(phvctx);
 			StringCchPrintf(szMsg, countof(szMsg),
-			               c ? TEXT("检测到 %u 条已变化（标红）。") : TEXT("未发现变化的条目。"), c);
+			               c ? TEXT("检测到 %u 条存疑（紫底）。") : TEXT("未发现存疑条目。"), c);
 			MessageBox(phvctx->hWnd, szMsg, NULL, MB_OK | MB_ICONINFORMATION);
 			break;
 
@@ -2172,12 +2309,47 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 						}
 
 						case NM_RCLICK:  // 1.6.3: 右键菜单（复制的第二通道，不依赖列表焦点）
+						        // 1.7.0: 状态项动态追加——按选中集并集显示，
+						        // 每个操作只作用于自己适用的行（grilling 定案）
 						{
 							HMENU hmCtx = CreatePopupMenu();
-							INT nCmd;
+							INT nCmd, nScan;
 							POINT pt;
+							BOOL bHasNew = FALSE, bHasInBook = FALSE, bHasMismatch = FALSE;
+							UINT cSel = 0;
+
+							/* 收集选中集状态并集 */
+							nScan = -1;
+							while ((nScan = ListView_GetNextItem(phvctx->hWndList, nScan, LVNI_SELECTED)) != -1)
+							{
+								UINT uStatus;
+								++cSel;
+								if ((UINT)nScan >= phvctx->cTotal)
+									continue;
+								uStatus = phvctx->index[nScan]->uStatusID;
+								if (uStatus == HV_STATUS_NEW)
+									bHasNew = TRUE;
+								else
+									bHasInBook = TRUE;   // 册内态（含缺失/未验/存疑）
+								if (uStatus == HV_STATUS_MISMATCH)
+									bHasMismatch = TRUE;
+							}
+							// 1.6.7 竞态锁延伸：维护哈希中（HashOne 消息泵）只留复制/全选，
+							// 状态操作禁入——防泵分发重入改条目
+							if (phvctx->bMaintLock)
+								bHasNew = bHasInBook = bHasMismatch = FALSE;
+
 							AppendMenu(hmCtx, MF_STRING, 1, TEXT("复制所选（名字+哈希）"));
 							AppendMenu(hmCtx, MF_STRING, 2, TEXT("全选"));
+							if (cSel && (bHasNew || bHasInBook))
+								AppendMenu(hmCtx, MF_SEPARATOR, 0, NULL);
+							if (bHasNew)
+								AppendMenu(hmCtx, MF_STRING, 3, TEXT("添加（重算入册）"));
+							if (bHasInBook)
+								AppendMenu(hmCtx, MF_STRING, 4, TEXT("删除（移出清单）"));
+							if (bHasMismatch)
+								AppendMenu(hmCtx, MF_STRING, 5, TEXT("更新（以现在为准）"));
+
 							GetCursorPos(&pt);
 							nCmd = TrackPopupMenu(hmCtx, TPM_RETURNCMD | TPM_RIGHTBUTTON,
 							                      pt.x, pt.y, 0, hWnd, NULL);
@@ -2193,6 +2365,35 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 								lvi.stateMask = LVIS_SELECTED;
 								while ((nItem = ListView_GetNextItem(phvctx->hWndList, nItem, 0)) != -1)
 									ListView_SetItemState(phvctx->hWndList, nItem, LVIS_SELECTED, LVIS_SELECTED);
+							}
+							else if (nCmd == 3)
+							{
+								UINT cRes = HashVerifyCtxAddSel(phvctx);
+								if (cRes & 0x8000)
+									MessageBox(hWnd,
+										TEXT("部分文件哈希失败，未能全部收录。"),
+										NULL, MB_OK | MB_ICONWARNING);
+							}
+							else if (nCmd == 4)
+							{
+								// 定案：只删册内行——新增行先取消选中（无条目可删），
+								// 再复用维护移除（内存态行立即消失；盘上文件绝不碰，协议三）
+								INT nDrop = -1;
+								while ((nDrop = ListView_GetNextItem(phvctx->hWndList, nDrop, LVNI_SELECTED)) != -1)
+								{
+									if ((UINT)nDrop >= phvctx->cTotal ||
+									    phvctx->index[nDrop]->uStatusID == HV_STATUS_NEW)
+										ListView_SetItemState(phvctx->hWndList, nDrop, 0, LVIS_SELECTED);
+								}
+								HashVerifyMaintRemoveSel(phvctx);
+							}
+							else if (nCmd == 5)
+							{
+								UINT cRes = HashVerifyCtxUpdateSel(phvctx);
+								if (cRes & 0x8000)
+									MessageBox(hWnd,
+										TEXT("部分文件哈希失败，未能全部更新。"),
+										NULL, MB_OK | MB_ICONWARNING);
 							}
 							return(TRUE);
 						}
@@ -2437,11 +2638,15 @@ VOID WINAPI HashVerifyDlgInit( PHASHVERIFYCONTEXT phvctx )
 		{
 			if (iStatus == 5)
 				continue;
-			// 1.6.3: STALE 无多语言资源（维护功能仅中文），硬编码
+			// 1.7.0: 存疑资源化（21 语言，Translations IDS_HV_STATUS_STALE）
 			if (iStatus == HV_STATUS_STALE)
 			{
-				StringCbCopy(phvctx->szStatus[iStatus],
-				            sizeof(phvctx->szStatus[iStatus]), TEXT("已变化"));
+				LoadString(
+					g_hModThisDll,
+					IDS_HV_STATUS_STALE,
+					phvctx->szStatus[iStatus],
+					countof(phvctx->szStatus[iStatus])
+				);
 				continue;
 			}
 			LoadString(
@@ -2677,11 +2882,17 @@ LONG_PTR WINAPI HashVerifySetColor( PHASHVERIFYCONTEXT phvctx, LPNMLVCUSTOMDRAW 
 					pcd->clrText = RGB(0x80, 0x80, 0x80);
 					break;
 
+				case HV_STATUS_STALE:   // 1.7.0 存疑整行白字（紫底在下方统一着色）
+					pcd->clrText = RGB(0xFF, 0xFF, 0xFF);
+					break;
+
 				default:
 					pcd->clrText = CLR_DEFAULT;
 			}
 
 			pcd->clrTextBk = CLR_DEFAULT;
+			if (pItem->uStatusID == HV_STATUS_STALE)   // 1.7.0 存疑整行紫底（更名自「已变化」，替换原橙红标）
+				pcd->clrTextBk = RGB(0x6A, 0x00, 0xA8);
 
 			// The status column, however, deserves special treatment
 			if (pcd->iSubItem == HV_COL_STATUS)
@@ -2720,9 +2931,9 @@ LONG_PTR WINAPI HashVerifySetColor( PHASHVERIFYCONTEXT phvctx, LPNMLVCUSTOMDRAW 
 						// 1.6.9: HV_STATUS_DAMAGED 着色分支随 chk 铲除
 
 
-						case HV_STATUS_STALE:        // 已变化（1.6.3 维护检测：橙红底白字）
+						case HV_STATUS_STALE:        // 存疑（1.7.0 更名+整行紫底，与黄缺失/蓝新增同惯例）
 							pcd->clrText = RGB(0xFF, 0xFF, 0xFF);
-							pcd->clrTextBk = RGB(0xE0, 0x50, 0x10);
+							pcd->clrTextBk = RGB(0x6A, 0x00, 0xA8);
 							break;
 					}
 				}
@@ -2986,7 +3197,7 @@ INT __cdecl HashVerifySortCompare( PHASHVERIFYCONTEXT phvctx, PPCHVITEM ppItemA,
 		case HV_COL_STATUS:
 		{
 			// 排序键（下标即 uStatusID）：未算=0、相符=1、不符=2、无法读=3、新增=4、
-			// 损坏=5、已变化=6——1.6.7 修复：原 5 格数组装不下 DAMAGED/STALE=点列排序越界读
+			// 5=空缺（DAMAGED 已铲）、存疑=6——1.6.7 修复：原 5 格数组装不下越界读
 			// 1.6.9: DAMAGED(5) 随 chk 铲除——键位 5 永不被访问（uStatusID 不再产生 5）
 			static const UINT8 ruSortKey[] = { 0, 1, 2, 3, 4, 5, 6 };
 			INT keyA = ruSortKey[pItemA->uStatusID];

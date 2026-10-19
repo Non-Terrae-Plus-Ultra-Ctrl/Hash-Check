@@ -1,4 +1,4 @@
-//
+﻿//
 // NOTE: This file is encoded in UTF-8.
 //
 
@@ -58,6 +58,7 @@ STRINGTABLE LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 	IDS_HV_NEW             "New:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NEW"
+	IDS_HV_STATUS_STALE     "SUSPECT"
 
 	// Strings for the options dialog
 	IDS_OPT_TITLE            "HashCheck Options"
@@ -125,6 +126,7 @@ STRINGTABLE LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_TRADITIONAL
 	IDS_HV_NEW             "新增："
 	IDS_HV_TIME              "時間:"
 	IDS_HV_STATUS_NEW      "新增"
+	IDS_HV_STATUS_STALE     "存疑"
 
 	IDS_OPT_TITLE            "HashCheck 選項"
 	IDS_OPT_CM               "介面整合"
@@ -191,6 +193,7 @@ STRINGTABLE LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
 	IDS_HV_NEW             "新增："
 	IDS_HV_TIME              "时间:"
 	IDS_HV_STATUS_NEW      "新增"
+	IDS_HV_STATUS_STALE     "存疑"
 
 	IDS_OPT_TITLE            "HashCheck 选项"
 	IDS_OPT_CM               "右键关联菜单"
@@ -257,6 +260,7 @@ STRINGTABLE LANGUAGE LANG_CZECH, SUBLANG_DEFAULT
 	IDS_HV_NEW             "Nové:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOVÝ"
+	IDS_HV_STATUS_STALE     "SPORNÝ"
 
 	IDS_OPT_TITLE            "HashCheck nastavení"
 	IDS_OPT_CM               "Integrace"
@@ -323,6 +327,7 @@ STRINGTABLE LANGUAGE LANG_GERMAN, SUBLANG_NEUTRAL
 	IDS_HV_NEW             "Neu:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NEU"
+	IDS_HV_STATUS_STALE     "FRAGLICH"
 
 	IDS_OPT_TITLE            "HashCheck Optionen"
 	IDS_OPT_CM               "Kontext-Menü Optionen"
@@ -389,6 +394,7 @@ STRINGTABLE LANGUAGE LANG_GREEK, SUBLANG_DEFAULT
 	IDS_HV_NEW             "Νέα:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "ΝΕΟ"
+	IDS_HV_STATUS_STALE     "ΑΜΦΙΒΟΛΟ"
 
 	IDS_OPT_TITLE            "Επιλογές HashCheck"
 	IDS_OPT_CM               "Επιλογές Μενού Συντόμευσης"
@@ -455,6 +461,7 @@ STRINGTABLE LANGUAGE LANG_SPANISH, SUBLANG_NEUTRAL
 	IDS_HV_NEW             "Nuevo:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NUEVO"
+	IDS_HV_STATUS_STALE     "DUDOSO"
 
 	IDS_OPT_TITLE            "Opciones de HashCheck"
 	IDS_OPT_CM               "Integración con Windows"
@@ -521,6 +528,7 @@ STRINGTABLE LANGUAGE LANG_FRENCH, SUBLANG_NEUTRAL
 	IDS_HV_NEW             "Nouveau:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOUVEAU"
+	IDS_HV_STATUS_STALE     "DOUTEUX"
 
 	IDS_OPT_TITLE            "Options de HashCheck"
 	IDS_OPT_CM               "Intégration à l'Explorateur Windows"
@@ -587,6 +595,7 @@ STRINGTABLE LANGUAGE LANG_ITALIAN, SUBLANG_NEUTRAL
 	IDS_HV_NEW             "Nuovo:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NUOVO"
+	IDS_HV_STATUS_STALE     "SOSPETTO"
 
 	IDS_OPT_TITLE            "Opzioni HashCheck"
 	IDS_OPT_CM               "Integrazione nella Shell"
@@ -653,6 +662,7 @@ STRINGTABLE LANGUAGE LANG_JAPANESE, SUBLANG_DEFAULT
 	IDS_HV_NEW             "追加:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "追加"
+	IDS_HV_STATUS_STALE     "要確認"
 
 	IDS_OPT_TITLE            "ハッシュチェックオプション"
 	IDS_OPT_CM               "コンテキストメニューオプション"
@@ -719,6 +729,7 @@ STRINGTABLE LANGUAGE LANG_KOREAN, SUBLANG_DEFAULT
 	IDS_HV_NEW             "추가:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "추가"
+	IDS_HV_STATUS_STALE     "의심"
 
 	IDS_OPT_TITLE            "해시 검사 옵션"
 	IDS_OPT_CM               "셸 통합"
@@ -785,6 +796,7 @@ STRINGTABLE LANGUAGE LANG_DUTCH, SUBLANG_NEUTRAL
 	IDS_HV_NEW             "Nieuw:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NIEUW"
+	IDS_HV_STATUS_STALE     "TWIJFEL"
 
 	IDS_OPT_TITLE            "HashCheck opties"
 	IDS_OPT_CM               "Snelmenu integratie"
@@ -851,6 +863,7 @@ STRINGTABLE LANGUAGE LANG_POLISH, SUBLANG_DEFAULT
 	IDS_HV_NEW             "Nowe:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOWY"
+	IDS_HV_STATUS_STALE     "WĄTPLIWY"
 
 	IDS_OPT_TITLE            "Opcje HashCheck"
 	IDS_OPT_CM               "Integracja z powłoką"
@@ -917,6 +930,7 @@ STRINGTABLE LANGUAGE LANG_PORTUGUESE, SUBLANG_PORTUGUESE_BRAZILIAN
 	IDS_HV_NEW             "Novo:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOVO"
+	IDS_HV_STATUS_STALE     "DUVIDOSO"
 
 	IDS_OPT_TITLE            "Opções do HashCheck"
 	IDS_OPT_CM               "Opções do menu de contexto"
@@ -983,6 +997,7 @@ STRINGTABLE LANGUAGE LANG_PORTUGUESE, SUBLANG_PORTUGUESE
 	IDS_HV_NEW             "Novo:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOVO"
+	IDS_HV_STATUS_STALE     "DUVIDOSO"
 
 	IDS_OPT_TITLE            "Opções do HashCheck"
 	IDS_OPT_CM               "Integração na Shell"
@@ -1049,6 +1064,7 @@ STRINGTABLE LANGUAGE LANG_ROMANIAN, SUBLANG_DEFAULT
 	IDS_HV_NEW             "Nou:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOU"
+	IDS_HV_STATUS_STALE     "INCERT"
 
 	IDS_OPT_TITLE            "Opţiuni HashCheck"
 	IDS_OPT_CM               "Integrare interfaţă"
@@ -1115,6 +1131,7 @@ STRINGTABLE LANGUAGE LANG_RUSSIAN, SUBLANG_DEFAULT
 	IDS_HV_NEW             "Новые:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "НОВЫЙ"
+	IDS_HV_STATUS_STALE     "СОМНИТЕЛЕН"
 
 	IDS_OPT_TITLE            "Опции HashCheck"
 	IDS_OPT_CM               "Интеграция в оболочку"
@@ -1181,6 +1198,7 @@ STRINGTABLE LANGUAGE LANG_SWEDISH, SUBLANG_NEUTRAL
 	IDS_HV_NEW             "Ny:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NY"
+	IDS_HV_STATUS_STALE     "OSÄKER"
 
 	IDS_OPT_TITLE            "HashCheck Inställningar"
 	IDS_OPT_CM               "Integration i operativsystemet"
@@ -1247,6 +1265,7 @@ STRINGTABLE LANGUAGE LANG_TURKISH, SUBLANG_DEFAULT
 	IDS_HV_NEW             "Yeni:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "YENİ"
+	IDS_HV_STATUS_STALE     "ŞÜPHELİ"
 
 	IDS_OPT_TITLE            "HashCheck Özellikleri"
 	IDS_OPT_CM               "Sağ tuş menü özellikleri"
@@ -1313,6 +1332,7 @@ STRINGTABLE LANGUAGE LANG_UKRAINIAN, SUBLANG_DEFAULT
 	IDS_HV_NEW             "Нові:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "НОВИЙ"
+	IDS_HV_STATUS_STALE     "СУМНІВНИЙ"
 
 	IDS_OPT_TITLE            "Опції HashCheck"
 	IDS_OPT_CM               "Інтеграція до оболонки"
@@ -1379,6 +1399,7 @@ STRINGTABLE LANGUAGE LANG_CATALAN, SUBLANG_CATALAN_CATALAN
 	IDS_HV_NEW             "Nou:"
 	IDS_HV_TIME              "Time:"
 	IDS_HV_STATUS_NEW      "NOU"
+	IDS_HV_STATUS_STALE     "DUBTÓS"
 
 	IDS_OPT_TITLE            "Opcions de HashCheck"
 	IDS_OPT_CM               "Integració amb Windows"
