@@ -40,6 +40,13 @@
 // 1.6.9: HV_STATUS_DAMAGED(5) 随 chk 功能链铲除——编号 5 空缺留位，历史档兼容不受影响
 #define HV_STATUS_STALE       6   // 1.6.3: 已变化（维护轻检 mtime/大小 与基线不符）
 
+// 1.7.4 铁驭令（存疑死亡闭环修复）：可重算落地的行=未验/存疑/不符。
+// 原版只算未验——检测变化标出存疑后无任何重算入口（开始键灰死、优先对存疑 beep 空转），
+// 存疑成绝路；三态皆可入队重算，落地成相符/不符
+#define HV_NEEDS_REHASH(uStatus) \
+	((uStatus) == HV_STATUS_NULL || (uStatus) == HV_STATUS_STALE || \
+	 (uStatus) == HV_STATUS_MISMATCH)
+
 #define LISTVIEW_EXSTYLES ( LVS_EX_HEADERDRAGDROP | \
                             LVS_EX_FULLROWSELECT  | \
                             LVS_EX_LABELTIP       | \
@@ -132,7 +139,6 @@ typedef struct {
 	BOOL               bSignatureFailed; // ECDSA signature missing/invalid or pub line missing/malformed (tampered)
 	BOOL               bHasSignature;    // a valid signature was verified
 	BOOL               bDoubleTampered;  // double container: both halves damaged (already reported)
-	TCHAR              szForeignFingerprint[80]; // 1.4.4: fingerprint of an untrusted signer (banner, 64 hex + NUL)
 	TCHAR              szTimestamp[MAX_STRINGRES];  // "; cn<...>" timestamp embedded in the file
 	TCHAR              szStatus[7][MAX_STRINGRES];
 	BOOL               bMaintLock; // 1.6.3: 维护哈希进行中（防消息泵重入维护流程）
@@ -301,8 +307,7 @@ VOID WINAPI HashVerifyListInfo( PHASHVERIFYCONTEXT phvctx, LPNMLVDISPINFO pdi );
 __forceinline LONG_PTR WINAPI HashVerifySetColor( PHASHVERIFYCONTEXT phvctx, LPNMLVCUSTOMDRAW pcd );
 __forceinline LONG_PTR WINAPI HashVerifyFindItem( PHASHVERIFYCONTEXT phvctx, LPNMLVFINDITEM pfi );
 __forceinline VOID WINAPI HashVerifySortColumn( PHASHVERIFYCONTEXT phvctx, LPNMLISTVIEW plv );
-VOID WINAPI HashVerifySortByStatus( PHASHVERIFYCONTEXT phvctx );
-__forceinline VOID WINAPI HashVerifyReadStates( PHASHVERIFYCONTEXT phvctx );
+VOID WINAPI HashVerifyReadStates( PHASHVERIFYCONTEXT phvctx );
 __forceinline VOID WINAPI HashVerifySetStates( PHASHVERIFYCONTEXT phvctx );
 INT __cdecl HashVerifySortCompare( PHASHVERIFYCONTEXT phvctx, PPCHVITEM ppItemA, PPCHVITEM ppItemB );
 __forceinline VOID WINAPI HashVerifyRebuildListIndex( PHASHVERIFYCONTEXT phvctx );
@@ -325,7 +330,7 @@ VOID CALLBACK HashVerify_RunDLLW( HWND hWnd, HINSTANCE hInstance,
 	{
 		MessageBox(NULL,
 			L"用法：rundll32 HashCheck.dll,HashVerify_RunDLLW <校验文件路径>",
-			NULL, MB_OK | MB_ICONINFORMATION);
+			TEXT("HashCheck"), MB_OK | MB_ICONINFORMATION);
 		return;
 	}
 
@@ -412,7 +417,7 @@ DWORD WINAPI HashVerifyThread( PTSTR pszPath )
 			TCHAR szFormat[MAX_STRINGRES], szMessage[0x100];
 			LoadString(g_hModThisDll, IDS_HV_LOADERROR_FMT, szFormat, countof(szFormat));
 			StringCchPrintf(szMessage, countof(szMessage), szFormat, pszPath);
-			MessageBox(NULL, szMessage, NULL, MB_OK | MB_ICONERROR);
+			MessageBox(NULL, szMessage, TEXT("HashCheck"), MB_OK | MB_ICONERROR);
 		}
 
 	free(pbRawData);
@@ -1216,14 +1221,14 @@ VOID WINAPI HashVerifyStartHashing( PHASHVERIFYCONTEXT phvctx, BOOL bPriority, B
 	if (bPriority)
 		HashVerifyReadStates(phvctx);
 
-	// Count the files to hash this run: unhashed manifest files only ("新增"/NEW
-	// files are never hashed). In priority mode, selected files go first; the
-	// unselected files are also included when bIncludeRest is set (mid-run
-	// reprioritization), so they follow the selected ones.
+	// Count the files to hash this run: 未验/存疑/不符（1.7.4 三态可重算；
+	// "新增"/NEW files are never hashed）. In priority mode, selected files go
+	// first; the unselected files are also included when bIncludeRest is set
+	// (mid-run reprioritization), so they follow the selected ones.
 	for (i = 0; i < phvctx->cOrigTotal; ++i)
 	{
 		PHASHVERIFYITEM pItem = phvctx->index[i];
-		if (pItem->uStatusID != HV_STATUS_NULL)
+		if (!HV_NEEDS_REHASH(pItem->uStatusID))
 			continue;
 		if (!bPriority || (pItem->uState & LVIS_SELECTED) || bIncludeRest)
 			++cTotal2Hash;
@@ -1245,7 +1250,7 @@ VOID WINAPI HashVerifyStartHashing( PHASHVERIFYCONTEXT phvctx, BOOL bPriority, B
 	for (i = 0; i < phvctx->cOrigTotal; ++i)
 	{
 		PHASHVERIFYITEM pItem = phvctx->index[i];
-		if (pItem->uStatusID != HV_STATUS_NULL)
+		if (!HV_NEEDS_REHASH(pItem->uStatusID))
 			continue;
 		if (bPriority && !(pItem->uState & LVIS_SELECTED))
 			continue;
@@ -1258,7 +1263,7 @@ VOID WINAPI HashVerifyStartHashing( PHASHVERIFYCONTEXT phvctx, BOOL bPriority, B
 		for (i = 0; i < phvctx->cOrigTotal; ++i)
 		{
 			PHASHVERIFYITEM pItem = phvctx->index[i];
-			if (pItem->uStatusID != HV_STATUS_NULL)
+			if (!HV_NEEDS_REHASH(pItem->uStatusID))
 				continue;
 			if (pItem->uState & LVIS_SELECTED)
 				continue;
@@ -1271,11 +1276,10 @@ VOID WINAPI HashVerifyStartHashing( PHASHVERIFYCONTEXT phvctx, BOOL bPriority, B
 	phvctx->queue  = queue;
 	phvctx->cQueue = cQueued;
 
-	// While hashing, "暂停"/"继续" toggles pause; "优先" is disabled
+	// While hashing, "暂停"/"继续" toggles pause（1.7.5: 第三键已删，无 STOP 管理行）
 	SetControlText(phvctx->hWnd, IDC_PAUSE, IDS_HV_PAUSE);
 	EnableControl(phvctx->hWnd, IDC_PAUSE, TRUE);
-	EnableControl(phvctx->hWnd, IDC_STOP, FALSE);
-	// 恢复进度条为正常(绿)：暂停后点「优先」重启会绕过暂停/继续的着色切换
+	// 恢复进度条为正常(绿)：暂停后重启会绕过暂停/继续的着色切换
 	SetProgressBarPause((PCOMMONCONTEXT)phvctx, PBST_NORMAL);
 
 	// Preserve the overall progress counts across a mid-run restart: the worker
@@ -1862,6 +1866,99 @@ static UINT HashVerifyCtxUpdateSel( PHASHVERIFYCONTEXT phvctx )
 	return(cFailed ? (cDone | 0x8000) : cDone);
 }
 
+// 1.7.3 右键「删除」（铁驭令重构）：先弹确认窗列出全部目标（question 样式，绝不吓人），
+// 确认后册内行分类处置——盘上仍在（相符/不符/存疑/未验）→转「新增」态：
+// 与 verify 窗目录扫描哲学一致（册外文件即新增），pszExpected=NULL 使保存维护组稿
+// 自然跳过=出册；盘上已无（缺失）→行移除（复用维护移除）。盘上文件绝不碰（协议三）。
+static VOID HashVerifyCtxDeleteSel( PHASHVERIFYCONTEXT phvctx )
+{
+	PHVITEM pItem;
+	INT nDrop = -1;
+	UINT cInBook = 0, cOnDisk = 0, cMissing = 0;
+	UINT cchList = 0;
+	TCHAR szList[MAX_PATH * 4];
+	TCHAR szMsg[MAX_PATH * 4 + 200];
+	TCHAR szFull[MAX_PATH];
+	WIN32_FILE_ATTRIBUTE_DATA fad;
+
+	// 第一轮：收集册内选中行名单（新增行跳过并取消选中——无条目可删）
+	szList[0] = 0;
+	while ((nDrop = ListView_GetNextItem(phvctx->hWndList, nDrop, LVNI_SELECTED)) != -1)
+	{
+		if ((UINT)nDrop >= phvctx->cTotal)
+			continue;
+		pItem = phvctx->index[nDrop];
+		if (!pItem)
+			continue;
+		if (pItem->uStatusID == HV_STATUS_NEW)
+		{
+			ListView_SetItemState(phvctx->hWndList, nDrop, 0, LVIS_SELECTED);
+			continue;
+		}
+		++cInBook;
+		if (cInBook <= 8 &&
+		    cchList + (UINT)lstrlen(pItem->pszDisplayName) < countof(szList) - 8)
+		{
+			StringCchCat(szList, countof(szList), pItem->pszDisplayName);
+			StringCchCat(szList, countof(szList), TEXT("\r\n"));
+			cchList += (UINT)lstrlen(pItem->pszDisplayName) + 2;
+		}
+	}
+	if (!cInBook)
+		return;
+
+	// 确认窗：列出目标清单，确认才删、取消不动
+	StringCchPrintf(szMsg, countof(szMsg),
+	                cInBook > 8
+	                  ? TEXT("确定删除以下 %u 个条目？\r\n\r\n%s…\r\n盘上仍存在的文件将转为新增行；已缺失的条目将从清单移除。")
+	                  : TEXT("确定删除以下 %u 个条目？\r\n\r\n%s盘上仍存在的文件将转为新增行；已缺失的条目将从清单移除。"),
+	                cInBook, szList);
+	if (MessageBox(phvctx->hWnd, szMsg, TEXT("HashCheck"),
+	               MB_OKCANCEL | MB_ICONQUESTION) != IDOK)
+		return;
+
+	// 第二轮：分类处置——盘上在→转新增；盘上无→留选中走移除
+	nDrop = -1;
+	while ((nDrop = ListView_GetNextItem(phvctx->hWndList, nDrop, LVNI_SELECTED)) != -1)
+	{
+		if ((UINT)nDrop >= phvctx->cTotal)
+			continue;
+		pItem = phvctx->index[nDrop];
+		if (!pItem || pItem->uStatusID == HV_STATUS_NEW)
+			continue;
+		HashVerifyBuildFullPath(phvctx, pItem, szFull, countof(szFull));
+		if (GetFileAttributesExW(szFull, GetFileExInfoStandard, &fad))
+		{
+			// 盘上在：转新增态（计数随迁；存疑账挂相符=1.6.3 Detect 既有惯例）
+			switch (pItem->uStatusID)
+			{
+				case HV_STATUS_MATCH:       if (phvctx->cMatch)      --phvctx->cMatch;      break;
+				case HV_STATUS_MISMATCH:    if (phvctx->cMismatch)   --phvctx->cMismatch;   break;
+				case HV_STATUS_UNREADABLE:  if (phvctx->cUnreadable) --phvctx->cUnreadable; break;
+				case HV_STATUS_STALE:       if (phvctx->cMatch)      --phvctx->cMatch;      break;
+				default: break;
+			}
+			++phvctx->cNew;
+			pItem->pszExpected = NULL;   // 组稿跳过=保存维护自然出册
+			pItem->szActual[0] = 0;
+			pItem->ftModified = 0;
+			pItem->uStatusID = HV_STATUS_NEW;
+			++cOnDisk;
+			ListView_SetItemState(phvctx->hWndList, nDrop, 0, LVIS_SELECTED);   // 防误删
+		}
+		else
+			++cMissing;   // 缺失行留选中，走维护移除
+	}
+	if (cMissing)
+		HashVerifyMaintRemoveSel(phvctx);
+	if (cOnDisk)
+	{
+		HashVerifyOrigSnapshotFree(phvctx);
+		HashVerifyUpdateSummary(phvctx, NULL);
+		InvalidateRect(phvctx->hWndList, NULL, FALSE);
+	}
+}
+
 // 保存维护：重算 变化/未验 条目 + 原位改写（temp+替换，绝不出半档）
 static BOOL HashVerifyMaintSave( PHASHVERIFYCONTEXT phvctx )
 {
@@ -1902,7 +1999,7 @@ static BOOL HashVerifyMaintSave( PHASHVERIFYCONTEXT phvctx )
 	}
 	if (!cWrote && !phvctx->cTotal)
 	{
-		MessageBox(phvctx->hWnd, TEXT("清单为空，无可保存条目。"), NULL, MB_OK | MB_ICONINFORMATION);
+		MessageBox(phvctx->hWnd, TEXT("清单为空，无可保存条目。"), TEXT("HashCheck"), MB_OK | MB_ICONINFORMATION);
 		return(FALSE);
 	}
 	if (cMissing)
@@ -1910,7 +2007,7 @@ static BOOL HashVerifyMaintSave( PHASHVERIFYCONTEXT phvctx )
 		TCHAR szMsg[0x100];
 		StringCchPrintf(szMsg, countof(szMsg),
 		                TEXT("检测到 %u 个文件已不存在。\r\n\r\n是=从清单移除；否=保留原条目。"), cMissing);
-		if (MessageBox(phvctx->hWnd, szMsg, NULL, MB_YESNO | MB_ICONQUESTION) == IDYES)
+		if (MessageBox(phvctx->hWnd, szMsg, TEXT("HashCheck"), MB_YESNO | MB_ICONQUESTION) == IDYES)
 			cDropped = 1;
 	}
 
@@ -2064,12 +2161,12 @@ static BOOL HashVerifyMaintSave( PHASHVERIFYCONTEXT phvctx )
 		{
 			TCHAR szMsg[0x100];
 			StringCchPrintf(szMsg, countof(szMsg),
-			                TEXT("维护完成：共 %u 条已写回（其中重算 %u）。"), cWrote, cRehash);
-			MessageBox(phvctx->hWnd, szMsg, NULL, MB_OK | MB_ICONINFORMATION);
+			                TEXT("维护完成：共 %u 条已写回，重算 %u。"), cWrote, cRehash);
+			MessageBox(phvctx->hWnd, szMsg, TEXT("HashCheck"), MB_OK | MB_ICONINFORMATION);
 		}
 	}
 	else
-		MessageBox(phvctx->hWnd, TEXT("写盘失败，原文件未改动。"), NULL, MB_OK | MB_ICONERROR);
+		MessageBox(phvctx->hWnd, TEXT("写盘失败，原文件未改动。"), TEXT("HashCheck"), MB_OK | MB_ICONERROR);
 	return(bRet);
 }
 
@@ -2086,35 +2183,49 @@ VOID WINAPI HashVerifyMaintainMenu( PHASHVERIFYCONTEXT phvctx )
 		return;
 	if (phvctx->status == ACTIVE || phvctx->status == PAUSED)
 	{
-		MessageBox(phvctx->hWnd, TEXT("校验正在进行，请等完成后再维护。"),
-		           NULL, MB_OK | MB_ICONINFORMATION);
+		MessageBox(phvctx->hWnd, TEXT("校验正在进行，请等完成后再打开更多。"),
+		           TEXT("HashCheck"), MB_OK | MB_ICONINFORMATION);
 		return;
 	}
 
 	GetWindowRect(GetDlgItem(phvctx->hWnd, IDC_MAINTAIN), &rc);
 	hMenu = CreatePopupMenu();
-	AppendMenu(hMenu, MF_STRING, 1, TEXT("添加文件…"));
-	AppendMenu(hMenu, MF_STRING, 2, TEXT("添加文件夹…"));
+	// 1.7.3 菜单重构（铁驭令）：「优先」迁入第一位（原底部第三键）；「移除选中行」
+	// 与右键删除去重移除；功能名后的括号提示全删
+	AppendMenu(hMenu, MF_STRING, 1, TEXT("优先"));
 	AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
-	AppendMenu(hMenu, MF_STRING, 3, TEXT("移除选中行"));
-	AppendMenu(hMenu, MF_STRING, 4, TEXT("检测变化（mtime/大小）"));
+	AppendMenu(hMenu, MF_STRING, 2, TEXT("添加文件…"));
+	AppendMenu(hMenu, MF_STRING, 3, TEXT("添加文件夹…"));
 	AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
-	AppendMenu(hMenu, MF_STRING, 5, TEXT("保存维护（重算变化，原位改写）"));
+	AppendMenu(hMenu, MF_STRING, 4, TEXT("检测变化"));
+	AppendMenu(hMenu, MF_STRING, 5, TEXT("保存维护"));
 	cmd = TrackPopupMenu(hMenu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
 	                     rc.left, rc.bottom, 0, phvctx->hWnd, NULL);
 	DestroyMenu(hMenu);
 
 	switch (cmd)
 	{
-		case 1:
+		case 1:  // 1.7.3「优先」：原底部第三键功能迁入——只校验选中的条目
+		{
+			INT nSel = ListView_GetNextItem(phvctx->hWndList, -1, LVNI_SELECTED);
+			if (nSel == -1)
+				MessageBox(phvctx->hWnd,
+				           TEXT("请先选中要优先校验的条目。"),
+				           TEXT("HashCheck"), MB_OK | MB_ICONINFORMATION);
+			else
+				HashVerifyStartHashing(phvctx, TRUE, FALSE);
+			break;
+		}
+
+		case 2:
 			c = HashVerifyMaintAddFilesDlg(phvctx);
 			HashVerifyUpdateSummary(phvctx, NULL);
 			InvalidateRect(phvctx->hWndList, NULL, FALSE);
 			StringCchPrintf(szMsg, countof(szMsg), TEXT("已添加 %u 个文件。"), c);
-			MessageBox(phvctx->hWnd, szMsg, NULL, MB_OK | MB_ICONINFORMATION);
+			MessageBox(phvctx->hWnd, szMsg, TEXT("HashCheck"), MB_OK | MB_ICONINFORMATION);
 			break;
 
-		case 2:
+		case 3:
 		{
 			TCHAR szDir[MAX_PATH];
 			if (HashVerifyMaintBrowseFolder(phvctx->hWnd, szDir, countof(szDir)))
@@ -2123,23 +2234,16 @@ VOID WINAPI HashVerifyMaintainMenu( PHASHVERIFYCONTEXT phvctx )
 				HashVerifyUpdateSummary(phvctx, NULL);
 				InvalidateRect(phvctx->hWndList, NULL, FALSE);
 				StringCchPrintf(szMsg, countof(szMsg), TEXT("已添加 %u 个文件。"), c);
-				MessageBox(phvctx->hWnd, szMsg, NULL, MB_OK | MB_ICONINFORMATION);
+				MessageBox(phvctx->hWnd, szMsg, TEXT("HashCheck"), MB_OK | MB_ICONINFORMATION);
 			}
 			break;
 		}
 
-		case 3:
-			c = HashVerifyMaintRemoveSel(phvctx);
-			StringCchPrintf(szMsg, countof(szMsg),
-			               c ? TEXT("已移除 %u 条。") : TEXT("未选中任何行。"), c);
-			MessageBox(phvctx->hWnd, szMsg, NULL, MB_OK | (c ? MB_ICONINFORMATION : MB_ICONWARNING));
-			break;
-
 		case 4:
 			c = HashVerifyMaintDetect(phvctx);
 			StringCchPrintf(szMsg, countof(szMsg),
-			               c ? TEXT("检测到 %u 条存疑（紫底）。") : TEXT("未发现存疑条目。"), c);
-			MessageBox(phvctx->hWnd, szMsg, NULL, MB_OK | MB_ICONINFORMATION);
+			               c ? TEXT("检测到 %u 条存疑。") : TEXT("未发现存疑条目。"), c);
+			MessageBox(phvctx->hWnd, szMsg, TEXT("HashCheck"), MB_OK | MB_ICONINFORMATION);
 			break;
 
 		case 5:
@@ -2183,10 +2287,11 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 			SendMessage(phvctx->hWndPBTotal, PBM_SETPOS, 0, 0);
 			HashVerifyUpdateSummary(phvctx, NULL);
 
-			// Standby controls: "开始" (IDC_PAUSE) and "优先" (IDC_STOP)
+			// Standby controls: "开始" (IDC_PAUSE)——1.7.5 铁驭令两键版：
+			// 灰「完成」第三键整体删除（震怒令「为啥有一个完成（灰色的）？去掉」），
+			// 重算入口由「开始」键承担（算完态可点=HV_NEEDS_REHASH 三态重算）
 			SetControlText(hWnd, IDC_PAUSE, IDS_HV_START);
 			EnableControl(hWnd, IDC_PAUSE, TRUE);
-			EnableControl(hWnd, IDC_STOP, TRUE);
 
 			return(TRUE);
 		}
@@ -2216,10 +2321,10 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 		{
 			phvctx = (PHASHVERIFYCONTEXT)GetWindowLongPtr(hWnd, DWLP_USER);
 
-			// 1.6.7：维护同步哈希泵消息期间——开始/整理一律拒入
+			// 1.6.7：维护同步哈希泵消息期间——开始一律拒入（1.7.5 第三键已删）
 			// （防 worker 与维护循环并发写条目=竞态脏数据）
 			if (phvctx && phvctx->bMaintLock &&
-			    (LOWORD(wParam) == IDC_PAUSE || LOWORD(wParam) == IDC_STOP))
+			    (LOWORD(wParam) == IDC_PAUSE))
 				break;
 
 			switch (LOWORD(wParam))
@@ -2229,38 +2334,10 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 					if (phvctx->status == ACTIVE || phvctx->status == PAUSED)
 					{
 						WorkerThreadTogglePause((PCOMMONCONTEXT)phvctx);
-						// 暂停时允许中途优先，运行时禁用
-						EnableControl(phvctx->hWnd, IDC_STOP, phvctx->status == PAUSED);
+						// 1.7.3: 中途优先入口随「优先」迁设置菜单——暂停态第三键不再启用
 					}
 					else
 						HashVerifyStartHashing(phvctx, FALSE, FALSE);  // "开始": hash all
-					return(TRUE);
-				}
-
-				case IDC_STOP:  // "优先" (算完前) / "整理" (算完后)
-				{
-					if (phvctx->status == CLEANUP_COMPLETED)
-					{
-						if (phvctx->cHandledMsgs >= phvctx->cOrigTotal - phvctx->cMissing)
-							HashVerifySortByStatus(phvctx);  // 全部算完：整理
-						else
-							HashVerifyStartHashing(phvctx, TRUE, FALSE);  // 部分算完：再次优先算选中
-					}
-					else if (phvctx->status == ACTIVE || phvctx->status == PAUSED)
-					{
-						// 中途优先：停止当前 worker，选中文件插队后重启
-						// HCF_RESTARTING 抑制旧 worker 的 DONE 消息，避免与新 worker 竞态
-						phvctx->dwFlags |= HCF_RESTARTING;
-						WorkerThreadStop((PCOMMONCONTEXT)phvctx);
-						WorkerThreadCleanup((PCOMMONCONTEXT)phvctx);
-						phvctx->dwFlags &= ~HCF_RESTARTING;
-						HashVerifyStartHashing(phvctx, TRUE, TRUE);
-					}
-					else
-					{
-						// 待命：只算选中的文件
-						HashVerifyStartHashing(phvctx, TRUE, FALSE);
-					}
 					return(TRUE);
 				}
 
@@ -2339,16 +2416,16 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 							if (phvctx->bMaintLock)
 								bHasNew = bHasInBook = bHasMismatch = FALSE;
 
-							AppendMenu(hmCtx, MF_STRING, 1, TEXT("复制所选（名字+哈希）"));
+							AppendMenu(hmCtx, MF_STRING, 1, TEXT("复制所选"));
 							AppendMenu(hmCtx, MF_STRING, 2, TEXT("全选"));
 							if (cSel && (bHasNew || bHasInBook))
 								AppendMenu(hmCtx, MF_SEPARATOR, 0, NULL);
 							if (bHasNew)
-								AppendMenu(hmCtx, MF_STRING, 3, TEXT("添加（重算入册）"));
+								AppendMenu(hmCtx, MF_STRING, 3, TEXT("添加"));
 							if (bHasInBook)
-								AppendMenu(hmCtx, MF_STRING, 4, TEXT("删除（移出清单）"));
+								AppendMenu(hmCtx, MF_STRING, 4, TEXT("删除"));
 							if (bHasMismatch)
-								AppendMenu(hmCtx, MF_STRING, 5, TEXT("更新（以现在为准）"));
+								AppendMenu(hmCtx, MF_STRING, 5, TEXT("更新"));
 
 							GetCursorPos(&pt);
 							nCmd = TrackPopupMenu(hmCtx, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -2372,20 +2449,12 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 								if (cRes & 0x8000)
 									MessageBox(hWnd,
 										TEXT("部分文件哈希失败，未能全部收录。"),
-										NULL, MB_OK | MB_ICONWARNING);
+										TEXT("HashCheck"), MB_OK | MB_ICONWARNING);
 							}
 							else if (nCmd == 4)
 							{
-								// 定案：只删册内行——新增行先取消选中（无条目可删），
-								// 再复用维护移除（内存态行立即消失；盘上文件绝不碰，协议三）
-								INT nDrop = -1;
-								while ((nDrop = ListView_GetNextItem(phvctx->hWndList, nDrop, LVNI_SELECTED)) != -1)
-								{
-									if ((UINT)nDrop >= phvctx->cTotal ||
-									    phvctx->index[nDrop]->uStatusID == HV_STATUS_NEW)
-										ListView_SetItemState(phvctx->hWndList, nDrop, 0, LVIS_SELECTED);
-								}
-								HashVerifyMaintRemoveSel(phvctx);
+								// 1.7.3：确认窗+分类处置（盘上在→转新增；缺失→移除；盘上文件绝不碰）
+								HashVerifyCtxDeleteSel(phvctx);
 							}
 							else if (nCmd == 5)
 							{
@@ -2393,7 +2462,7 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 								if (cRes & 0x8000)
 									MessageBox(hWnd,
 										TEXT("部分文件哈希失败，未能全部更新。"),
-										NULL, MB_OK | MB_ICONWARNING);
+										TEXT("HashCheck"), MB_OK | MB_ICONWARNING);
 							}
 							return(TRUE);
 						}
@@ -2456,23 +2525,22 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 			{
 				if (phvctx->cHandledMsgs >= phvctx->cOrigTotal - phvctx->cMissing)
 				{
-					// 全部算完：完成（禁用）+ 整理
-					SetControlText(phvctx->hWnd, IDC_PAUSE, IDS_HV_DONE);
+					// 全部算完：完成可点（1.7.4 铁驭令·死亡闭环修复——存疑/不符/未验行
+					// 可经此键全量重算落地；全相符时点击 beep 空转无害）；第三键整理已删（shell 右键承担）
+					SetControlText(phvctx->hWnd, IDC_PAUSE, IDS_HV_START);   // 1.7.5: 算完态显示「开始」可点=重算入口（铁驭令文案裸名）
 					ShowWindow(GetDlgItem(phvctx->hWnd, IDC_PAUSE), SW_SHOW);   // WorkerThreadCleanup 已隐藏，需重新显示
-					EnableWindow(GetDlgItem(phvctx->hWnd, IDC_PAUSE), FALSE);   // 禁用但可见
-					SetControlText(phvctx->hWnd, IDC_STOP, IDS_HV_SORT);  // 整理
-					EnableControl(phvctx->hWnd, IDC_STOP, TRUE);
+					EnableWindow(GetDlgItem(phvctx->hWnd, IDC_PAUSE), TRUE);   // 可见可点=重算入口
 				}
 				else
 				{
-					// 只算了一部分（如仅优先算了选中文件）：继续 + 优先
+					// 只算了一部分（如仅优先算了选中文件）：继续（剩余全量算）
 					SetControlText(phvctx->hWnd, IDC_PAUSE, IDS_HC_RESUME);
 					EnableControl(phvctx->hWnd, IDC_PAUSE, TRUE);
-					SetControlText(phvctx->hWnd, IDC_STOP, IDS_HV_PRIORITY);
-					EnableControl(phvctx->hWnd, IDC_STOP, TRUE);
 				}
 				EnableControl(phvctx->hWnd, IDC_PROG_TOTAL, TRUE);
 				EnableControl(phvctx->hWnd, IDC_PROG_FILE, TRUE);
+				// 1.7.5 两键版：第三键（灰「完成」）已整体删除——重算入口由「开始」键
+				// 承担（算完态显示「开始」可点，HV_NEEDS_REHASH 三态入队）
 
 				// 强制刷新列表和摘要，确保算完后的状态列与统计都显示出来
 				ListView_RedrawItems(phvctx->hWndList, 0, phvctx->cTotal);
@@ -2519,7 +2587,6 @@ VOID WINAPI HashVerifyDlgInit( PHASHVERIFYCONTEXT phvctx )
 			{ IDC_PENDING_LABEL,    IDS_HV_PENDING    },
 			{ IDC_NEW_LABEL,        IDS_HV_NEW        },
 			{ IDC_PAUSE,            IDS_HV_START      },
-			{ IDC_STOP,             IDS_HV_PRIORITY   },
 				{ IDC_TIME_LABEL,       IDS_HV_TIME       }
 			};
 
@@ -2530,17 +2597,9 @@ VOID WINAPI HashVerifyDlgInit( PHASHVERIFYCONTEXT phvctx )
 		SetDlgItemText(hWnd, IDC_TIME_RESULTS, phvctx->szTimestamp);
 	}
 
-	// 1.4.4: fingerprint banner for untrusted signers (the user chose not to
-	// trust in the TOFU prompt) -- stays visible for the whole session
-	if (phvctx->szForeignFingerprint[0])
-	{
-		TCHAR szBanner[160];
-
-		StringCchPrintf(szBanner, countof(szBanner),
-		                L"签名者：其他设备（指纹 %s）——请核对来源后再使用",
-		                phvctx->szForeignFingerprint);
-		SetDlgItemText(hWnd, IDC_FP_BANNER, szBanner);
-	}
+	// 1.7.3 第十条（铁驭令「顶部空白 banner 去掉」）：IDC_FP_BANNER 横幅控件已删。
+	// 原 1.4.4 fingerprint banner 是 TOFU 时代死代码——szForeignFingerprint 自
+	// 无签名线起无任何赋值处，整块随控件一并清除。
 
 	// Set the window icon and title
 	{
@@ -2668,8 +2727,13 @@ VOID WINAPI HashVerifyDlgInit( PHASHVERIFYCONTEXT phvctx )
 		phvctx->ppIndexOrig = NULL;   // 1.6.7: 原序快照（首排前懒存，维护增删即作废）
 		phvctx->cIndexOrig = 0;
 
-		// 1.6.5: 维护按钮（右上角）——1.6.3 可拉拽布局已按铁驭令回档拆除
-		SetWindowTextW(GetDlgItem(phvctx->hWnd, IDC_MAINTAIN), L"维护");
+		// 1.6.5: 维护按钮（1.7.1 挪至底部）——1.7.4 铁驭令「设置」更名「更多」，
+		// 21 语言资源化（中文「更多」/英文 More/其余按语义）——按钮位置不动
+		{
+			TCHAR szBtnText[64];
+			if (LoadString(g_hModThisDll, IDS_HV_MORE, szBtnText, countof(szBtnText)))
+				SetWindowTextW(GetDlgItem(phvctx->hWnd, IDC_MAINTAIN), szBtnText);
+		}
 	}
 }
 
@@ -3097,42 +3161,6 @@ VOID WINAPI HashVerifySortColumn( PHASHVERIFYCONTEXT phvctx, LPNMLISTVIEW plv )
 		// repaint of the list view's visible areas in order to avoid artifacts
 		InvalidateRect(phvctx->hWndList, NULL, FALSE);
 	}
-}
-
-VOID WINAPI HashVerifySortByStatus( PHASHVERIFYCONTEXT phvctx )
-{
-	// 按状态整理：未算 → 相符 → 不符 → 缺失 → 新增。
-	if (!phvctx->index || !phvctx->cTotal)
-		return;
-
-	phvctx->sort.iColumn = HV_COL_STATUS;
-	phvctx->sort.bReverse = FALSE;
-
-	qsort_s(phvctx->index, phvctx->cTotal, sizeof(PHVITEM),
-	        (int(__cdecl*)(void*, const void*, const void*))HashVerifySortCompare, phvctx);
-
-	// 排序重排 index 后，同步各 item 的列表索引
-	HashVerifyRebuildListIndex(phvctx);
-
-	// 更新列头排序箭头并重绘列表
-	{
-		HWND hWndHeader = ListView_GetHeader(phvctx->hWndList);
-		INT i;
-		HDITEM hdi;
-		hdi.mask = HDI_FORMAT;
-
-		for (i = HV_COL_FIRST; i <= HV_COL_LAST; ++i)
-		{
-			Header_GetItem(hWndHeader, i, &hdi);
-			hdi.fmt &= ~(HDF_SORTDOWN | HDF_SORTUP);
-			if (i == HV_COL_STATUS)
-				hdi.fmt |= HDF_SORTUP;
-			Header_SetItem(hWndHeader, i, &hdi);
-		}
-	}
-
-	ListView_RedrawItems(phvctx->hWndList, 0, phvctx->cTotal);
-	InvalidateRect(phvctx->hWndList, NULL, FALSE);
 }
 
 VOID WINAPI HashVerifyReadStates( PHASHVERIFYCONTEXT phvctx )

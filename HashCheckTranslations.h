@@ -53,6 +53,7 @@
 #define IDS_HV_STATUS_UNREADABLE        0x440E
 #define IDS_HV_STATUS_NEW               0x440F
 #define IDS_HV_STATUS_STALE             0x4417   /* 1.7.0 存疑（原硬编码「已变化」，21 语言资源化） */
+#define IDS_HV_MORE                     0x4418   /* 1.7.4 「设置」更名「更多」（21 语言资源化） */
 /* 1.6.9: IDS_HV_STATUS_DAMAGED (0x4416) 随 chk 功能链铲除 */
 #define IDS_HV_NEW                      0x4410
 #define IDS_HV_START                    0x4411

@@ -92,32 +92,31 @@ IDD_HASHPROP DIALOGEX 0, 0, 227, 218
     EDITTEXT            IDC_RESULTS,       7,   7, 213, 144, WS_TABSTOP | WS_GROUP | WS_HSCROLL | WS_VSCROLL | ES_MULTILINE | ES_NOHIDESEL | ES_READONLY
 }
 
-IDD_HASHVERF DIALOGEX 0, 0, 400, 262
+IDD_HASHVERF DIALOGEX 0, 0, 400, 248
     STYLE    DS_MODALFRAME | DS_SHELLFONT | DS_CENTER | WS_POPUPWINDOW | WS_CAPTION | WS_MINIMIZEBOX
     EXSTYLE  WS_EX_APPWINDOW
     FONT     9, "Microsoft YaHei UI"
 {
-    // 1.7.1: banner 恢复全宽 386（1.6.5 缩 340 让位回填）；维护按钮挪底与开始/完成并列三键等大
-    LTEXT           "", IDC_FP_BANNER,           7,   7, 386, 12
-    CONTROL         "", IDC_LIST, "SysListView32", WS_TABSTOP | WS_GROUP | WS_BORDER | LVS_OWNERDATA | LVS_REPORT | LVS_SHOWSELALWAYS, 7, 21, 386, 156
-    GROUPBOX        "", IDC_SUMMARY,              7, 184, 386, 50, WS_GROUP
-    LTEXT           "", IDC_MATCH_LABEL,         13, 195,  56,  8
-    RTEXT           "", IDC_MATCH_RESULTS,       73, 195, 104,  8
-    LTEXT           "", IDC_MISMATCH_LABEL,     223, 195,  56,  8
-    RTEXT           "", IDC_MISMATCH_RESULTS,   283, 195, 104,  8
-    LTEXT           "", IDC_UNREADABLE_LABEL,   13, 207,  56,  8
-    RTEXT           "", IDC_UNREADABLE_RESULTS, 73, 207, 104,  8
-    LTEXT           "", IDC_NEW_LABEL,         223, 207,  56,  8
-    RTEXT           "", IDC_NEW_RESULTS,       283, 207, 104,  8
-    LTEXT           "", IDC_PENDING_LABEL,      13, 219,  56,  8
-    RTEXT           "", IDC_PENDING_RESULTS,    73, 219, 104,  8
-    LTEXT           "", IDC_TIME_LABEL,        223, 219,  56,  8
-    RTEXT           "", IDC_TIME_RESULTS,      283, 219, 104,  8
-    CONTROL         "", IDC_PROG_TOTAL, "msctls_progress32", PBS_SMOOTH, 7, 241, 224, 6
-    CONTROL         "", IDC_PROG_FILE,  "msctls_progress32", PBS_SMOOTH, 7, 249, 224, 6
-    PUSHBUTTON      "", IDC_MAINTAIN,          235, 241,  50, 14, WS_TABSTOP
-    PUSHBUTTON      "", IDC_PAUSE,              289, 241,  50, 14, WS_TABSTOP | WS_GROUP
-    PUSHBUTTON      "", IDC_STOP,               343, 241,  50, 14, WS_TABSTOP
+    // 1.7.3 第十条（铁驭令「顶部空白 banner 去掉」）：IDC_FP_BANNER 控件删除，
+    // 列表顶格上移 14 dlu、全窗高度 262→248 收紧；三键/进度/摘要等比例上移
+    CONTROL         "", IDC_LIST, "SysListView32", WS_TABSTOP | WS_GROUP | WS_BORDER | LVS_OWNERDATA | LVS_REPORT | LVS_SHOWSELALWAYS, 7, 7, 386, 156
+    GROUPBOX        "", IDC_SUMMARY,              7, 170, 386, 50, WS_GROUP
+    LTEXT           "", IDC_MATCH_LABEL,         13, 181,  56,  8
+    RTEXT           "", IDC_MATCH_RESULTS,       73, 181, 104,  8
+    LTEXT           "", IDC_MISMATCH_LABEL,     223, 181,  56,  8
+    RTEXT           "", IDC_MISMATCH_RESULTS,   283, 181, 104,  8
+    LTEXT           "", IDC_UNREADABLE_LABEL,   13, 193,  56,  8
+    RTEXT           "", IDC_UNREADABLE_RESULTS, 73, 193, 104,  8
+    LTEXT           "", IDC_NEW_LABEL,         223, 193,  56,  8
+    RTEXT           "", IDC_NEW_RESULTS,       283, 193, 104,  8
+    LTEXT           "", IDC_PENDING_LABEL,      13, 205,  56,  8
+    RTEXT           "", IDC_PENDING_RESULTS,    73, 205, 104,  8
+    LTEXT           "", IDC_TIME_LABEL,        223, 205,  56,  8
+    RTEXT           "", IDC_TIME_RESULTS,      283, 205, 104,  8
+    CONTROL         "", IDC_PROG_TOTAL, "msctls_progress32", PBS_SMOOTH, 7, 227, 278, 6
+    CONTROL         "", IDC_PROG_FILE,  "msctls_progress32", PBS_SMOOTH, 7, 235, 278, 6
+    PUSHBUTTON      "", IDC_PAUSE,              289, 227,  50, 14, WS_TABSTOP | WS_GROUP
+    PUSHBUTTON      "", IDC_MAINTAIN,          343, 227,  50, 14, WS_TABSTOP
 }
 
 IDD_OPTIONS  DIALOGEX 10, 10, 200, 324
