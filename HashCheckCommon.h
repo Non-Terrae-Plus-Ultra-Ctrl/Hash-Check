@@ -34,6 +34,9 @@ extern "C" {
 // Codes
 #define THREAD_SUSPEND_ERROR  ((DWORD)-1)
 #define TIMER_ID_PAUSE        1
+#define TIMER_ID_MONITOR      2          // 1.7.7: 实时监测防抖聚合
+#define TIMER_ID_PROGRESS     3          // 1.7.10: 并行哈希进度聚合刷新（多 worker 字节原子累加→主线程定时刷条）
+#define WM_APP_MONITOR        (WM_APP + 4)   // 1.7.7: 监测线程通知主窗比对（+0~3 被 HM_WORKERTHREAD 系列占用）
 
 // Flags of DWORD width (which is an unsigned long)
 #define HCF_EXIT_PENDING      0x0001UL
@@ -76,6 +79,11 @@ typedef struct {
 	HANDLE             hThread;      // handle of the worker thread
 	HANDLE             hUnpauseEvent;// handle of the event which signals when unpaused
 	PFNWORKERMAIN      pfnWorkerMain;// worker function executed by the (non-GUI) thread
+	// 1.7.10 进度聚合（并行哈希）：多 worker 读块原子累加→主线程 200ms Timer 刷总进度条；
+	// dwParallelScale 恒 0 = 聚合关闭（HashProp 属性页路径零参与，保存路径走 1.7.8 专属 ulProgScale）
+	ULONGLONG          ullParallelBytes;  // 已完成字节（InterlockedAdd64 原子累加）
+	ULONGLONG          ullParallelTotal;  // 本轮队列总字节（进度范围）
+	DWORD              dwParallelScale;   // >4GB 压缩比（对齐 1.7.8 惯例）
 } COMMONCONTEXT, *PCOMMONCONTEXT;
 
 // File size

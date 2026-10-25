@@ -389,6 +389,11 @@ VOID WINAPI WorkerThreadHashFile( PCOMMONCONTEXT pcmnctx, PCTSTR pszPath,
 					ReadFile(hFile, pbuffer, READ_BUFFER_SIZE, &cbBufferRead, NULL);
 					WHUpdateEx(pwhctx, pbuffer, cbBufferRead);
 					cbFileRead += cbBufferRead;
+					// 1.7.10 进度聚合：并行验证链路读块原子累加（dwParallelScale 恒 0
+					// 的路径零参与——HashProp/保存专属 ulProgScale 各走各道）
+					if (pcmnctx->dwParallelScale)
+						InterlockedAdd64((PLONGLONG)&pcmnctx->ullParallelBytes,
+						                 (LONGLONG)cbBufferRead);
 
 				} while (cbBufferRead == READ_BUFFER_SIZE && (++cInner & 0x03));
 

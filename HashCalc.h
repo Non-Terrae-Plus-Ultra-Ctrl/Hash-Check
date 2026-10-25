@@ -68,6 +68,11 @@ typedef struct {
 	HANDLE             hThread;      // handle of the worker thread
 	HANDLE             hUnpauseEvent;// handle of the event which signals when unpaused
 	PFNWORKERMAIN      pfnWorkerMain;// worker function executed by the (non-GUI) thread
+	// 1.7.10 进度聚合（COMMONCONTEXT 尾段同步——独立完整定义结构须前缀逐字段对齐；
+	// 创建端/属性页恒 0=聚合零参与，仅为布局不错位）
+	ULONGLONG          ullParallelBytes;
+	ULONGLONG          ullParallelTotal;
+	DWORD              dwParallelScale;
 	// Members specific to HashCalc
 	HSIMPLELIST        hListRaw;     // data from IShellExtInit
 	HSIMPLELIST        hList;        // our expanded/processed data
