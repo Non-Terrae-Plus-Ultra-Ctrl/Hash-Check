@@ -680,7 +680,7 @@ VOID WINAPI HashPropUpdateResults( PHASHPROPCONTEXT phpctx, PHASHPROPITEM pItem 
 
 	// Flush the buffer to the text box
 	phpctx->obScratch = 0;
-	SendMessage(hWndResults, EM_SETSEL, -2, -2);
+	SendMessage(hWndResults, EM_SETSEL, (WPARAM)-2, (LPARAM)-2);   /* 1.8.2 显式 cast 消 W4（-2=全选惯例）*/
 	SendMessage(hWndResults, EM_REPLACESEL, FALSE, (LPARAM)&phpctx->scratch);
 
 	// ClearType will sometimes leave artifacts, so redraw if the user will

@@ -7,7 +7,7 @@
 Unicode true
 
 Name "HashCheck"
-OutFile "Hash-Check_1.8.0.exe"
+OutFile "Hash-Check_1.8.2.exe"
 
 RequestExecutionLevel admin
 ManifestSupportedOS all
@@ -109,13 +109,13 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "Ukrainian"
 !insertmacro MUI_LANGUAGE "Catalan"
 
-VIProductVersion "1.8.0.0"
+VIProductVersion "1.8.2.0"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "HashCheckPRO"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "1.8.0"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "1.8.2"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "Comments" "Installer distributed from https://github.com/gurnec/HashCheck/releases"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "Copyright © 2008-2016 Kai Liu, Christopher Gurnee, Tim Schlueter, et al. All rights reserved."
 VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "Installer (x86/x64, plain checksums, no chk, no crypto, no signature)"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "1.8.0"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "1.8.2"
 
 ; With solid compression, files that are required before the
 ; actual installation should be stored first in the data block,

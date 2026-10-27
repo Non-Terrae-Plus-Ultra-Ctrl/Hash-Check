@@ -19,6 +19,8 @@
 #include <Strsafe.h>
 #include <cassert>
 #include <algorithm>
+#include <thread>
+#include <vector>
 // 1.7.10 铁驭令「改成多性能」：验证端并行激活（源内 define 只开本文件——
 // 生成端 HashSave 的 USE_PPL 段维持原状不波及）
 #define USE_PPL
@@ -787,7 +789,7 @@ VOID WINAPI HashVerifyParseData( PHASHVERIFYCONTEXT phvctx )
 			// Abort if we are out of memory
 			if (!pItem) break;
 
-			pItem->filesize.ui64 = -1;
+			pItem->filesize.ui64 = (ULONGLONG)-1;   // 1.7.7 哨兵（载入行未探测）；1.8.2 显式 cast 消 W4 符号失配
 			pItem->filesize.sz[0] = 0;
 			pItem->pszDisplayName = pszFileName;
 			pItem->pszExpected = pszChecksum;
@@ -1282,11 +1284,47 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
 
     try
     {
-#ifdef USE_PPL
         if (bMultithreaded)
-            concurrency::parallel_for_each(phvctx->queue, phvctx->queue + phvctx->cQueue, per_file_worker);
+        {
+            // 1.8.1 铁驭令「按顺序来」（原话四线程模型）：弃 ConcRT parallel_for_each
+            // 自动分块（块抢占=铁驭看到的跳着算），改手写 worker 池+原子游标严格
+            // 顺序认领——第 N 个文件永远先于第 N+1 个被分配开工，谁完成谁领下一个
+            // 未分配的（完成序仍受文件大小影响=并行本质，但开工序严格 1,2,3,4,5...连续）
+            volatile LONG lNext = 0;
+            SYSTEM_INFO si;
+            UINT dwThreads, t;
+            GetSystemInfo(&si);
+            dwThreads = si.dwNumberOfProcessors;
+            if (dwThreads > 16)
+                dwThreads = 16;   // 池上限（与保存路径同款防御）
+            if (dwThreads > phvctx->cQueue)
+                dwThreads = phvctx->cQueue;
+            if (!dwThreads)
+                dwThreads = 1;
+            {
+                std::vector<std::thread> threads;
+                for (t = 0; t < dwThreads; ++t)
+                {
+                    threads.emplace_back([&]()
+                    {
+                        for (;;)
+                        {
+                            LONG g = InterlockedIncrement((volatile LONG *)&lNext);
+                            if ((UINT)g > phvctx->cQueue)
+                                break;   // 认领耗尽
+                            UINT j = (UINT)g - 1;
+                            if (phvctx->status == CANCEL_REQUESTED ||
+                                (phvctx->dwFlags & HCF_EXIT_PENDING))
+                                break;   // 停止/关窗：余项不跑（跑的在读块间自退）
+                            per_file_worker(phvctx->queue[j]);
+                        }
+                    });
+                }
+                for (auto& th : threads)
+                    th.join();
+            }
+        }
         else
-#endif
             std::for_each(phvctx->queue, phvctx->queue + phvctx->cQueue, per_file_worker);
     }
     catch (CanceledException) {}  // ignore cancellation requests
@@ -1551,7 +1589,8 @@ static DWORD WINAPI MaintRehashWorker( LPVOID lpParam )
 	}
 	for (;;)
 	{
-		LONG j = InterlockedIncrement(&pa->lNext) - 1;
+		LONG g = InterlockedIncrement(&pa->lNext);
+		LONG j = g - 1;
 		if ((UINT)j >= pa->cItems)
 			break;   // 认领耗尽
 		if (phvctx->dwFlags & HCF_EXIT_PENDING)
@@ -2510,7 +2549,6 @@ static BOOL HashVerifyMaintSave( PHASHVERIFYCONTEXT phvctx )
 			if (pItem->ftDate)
 			{
 				FILETIME ftUtc, ftLocal;
-				SYSTEMTIME st;
 
 				ftUtc.dwLowDateTime  = (DWORD)pItem->ftDate;
 				ftUtc.dwHighDateTime = (DWORD)(pItem->ftDate >> 32);
@@ -2596,7 +2634,6 @@ static BOOL HashVerifyMaintSave( PHASHVERIFYCONTEXT phvctx )
 			if (ftWrite && ftWrite != (ULONGLONG)-1)
 			{
 				FILETIME ftUtc, ftLocal;
-				SYSTEMTIME st;
 
 				ftUtc.dwLowDateTime  = (DWORD)ftWrite;
 				ftUtc.dwHighDateTime = (DWORD)(ftWrite >> 32);
@@ -3494,7 +3531,12 @@ VOID WINAPI HashVerifyUpdateSummary( PHASHVERIFYCONTEXT phvctx, PHASHVERIFYITEM 
 		}
 		SetDlgItemText(hWnd, IDC_PENDING_RESULTS, szBuffer);
 
-		SendMessage(phvctx->hWndPBTotal, PBM_SETPOS, phvctx->cHandledMsgs, 0);
+		// 1.8.1 铁驭实测「进度条瞎重置」终修：此处行数 SETPOS（0~cTotal）在 1.8.0
+		// 字节级范围（0~总字节/scale）下=拽回近零——每次节流放行即「重置一下」。
+		// 并行聚合启用（dwParallelScale!=0）时进度条由 TIMER_ID_PROGRESS 推字节，
+		// 此路跳过；行数 SETPOS 只服务串行/收尾态（HashProp 同款口径不受影响）
+		if (!phvctx->dwParallelScale)
+			SendMessage(phvctx->hWndPBTotal, PBM_SETPOS, phvctx->cHandledMsgs, 0);
 
 		// Now that we've updated the UI, update the prev structure
 		phvctx->prev.cMatch = phvctx->cMatch;
@@ -3843,7 +3885,7 @@ VOID WINAPI HashVerifyReadStates( PHASHVERIFYCONTEXT phvctx )
 
 		for (i = 0; i < phvctx->cTotal; ++i)
 		{
-			phvctx->index[i]->uState = ListView_GetItemState(
+			phvctx->index[i]->uState = (UINT8)ListView_GetItemState(   // 1.8.2 显式收窄消 W4（LVIS 值域 8 位内，零实害）
 				phvctx->hWndList,
 				i,
 				LVIS_FOCUSED | LVIS_SELECTED

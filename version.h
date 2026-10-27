@@ -12,11 +12,11 @@
 #define HASHCHECK_NAME_STR "HashCheck Shell Extension"
 
 // Full version: MUST be in the form of major,minor,revision,build
-// 1.8.0（2026-10-25 铁驭令）：多线程架构级改动自 1.7.10 升格 minor
-#define HASHCHECK_VERSION_FULL 1,8,0,0
+// 1.8.2（2026-10-27 铁驭令「优化一下代码吧」）：十二版叠层系统性优化轮
+#define HASHCHECK_VERSION_FULL 1,8,2,0
 
 // String version: May be any suitable string
-#define HASHCHECK_VERSION_STR "1.8.0"
+#define HASHCHECK_VERSION_STR "1.8.2"
 
 #ifdef _USRDLL
 // PE version: MUST be in the form of major.minor
